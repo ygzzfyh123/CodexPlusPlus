@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+async-trait = "0.1"
 base64.workspace = true
 directories.workspace = true
 futures-util = "0.3"
@@ -16,3 +17,12 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net"] }
 tokio-tungstenite.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_System_Com",
+  "Win32_UI_Shell",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true

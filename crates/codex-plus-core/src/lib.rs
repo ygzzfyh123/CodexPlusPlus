@@ -1,8 +1,12 @@
+pub mod app_paths;
 pub mod assets;
 pub mod bridge;
 pub mod cdp;
+pub mod launcher;
 pub mod models;
 pub mod paths;
+pub mod ports;
+pub mod proxy;
 pub mod settings;
 pub mod status;
 pub mod version;
