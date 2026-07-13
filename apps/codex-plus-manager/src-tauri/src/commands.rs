@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use codex_plus_core::config_backup::ConfigBackupPaths;
 use codex_plus_core::install::SILENT_BINARY;
 use codex_plus_core::models::{DeleteResult, SessionRef};
 use codex_plus_core::relay_environment::RelayEnvironmentReport;
@@ -519,6 +520,41 @@ pub fn save_settings(settings: BackendSettings) -> CommandResult<SettingsPayload
                 user_scripts: user_script_inventory(),
             },
         ),
+    }
+}
+
+#[tauri::command]
+pub fn export_full_config(path: String) -> CommandResult<Value> {
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return failed("请选择配置导出文件。", json!({}));
+    }
+    match codex_plus_core::config_backup::export_full_config(&path, &default_config_backup_paths())
+    {
+        Ok(user_script_count) => ok(
+            "完整配置已导出。文件包含 API Key 和登录信息，请妥善保管。",
+            json!({
+                "path": path.to_string_lossy(),
+                "userScriptCount": user_script_count
+            }),
+        ),
+        Err(error) => failed(&format!("导出完整配置失败：{error}"), json!({})),
+    }
+}
+
+#[tauri::command]
+pub fn import_full_config(path: String) -> CommandResult<Value> {
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return failed("请选择配置备份文件。", json!({}));
+    }
+    match codex_plus_core::config_backup::import_full_config(&path, &default_config_backup_paths())
+    {
+        Ok(result) => ok(
+            "完整配置已导入，并已在导入前自动备份原配置。",
+            serde_json::to_value(result).unwrap_or_else(|_| json!({})),
+        ),
+        Err(error) => failed(&format!("导入完整配置失败：{error}"), json!({})),
     }
 }
 
@@ -3190,6 +3226,18 @@ fn user_scripts_config_dir() -> PathBuf {
         .or_else(|| directories::BaseDirs::new().map(|dirs| dirs.home_dir().join(".config")))
         .unwrap_or_else(|| PathBuf::from(".config"))
         .join("Codex++")
+}
+
+fn default_config_backup_paths() -> ConfigBackupPaths {
+    let scripts_config_dir = user_scripts_config_dir();
+    ConfigBackupPaths {
+        settings_path: codex_plus_core::paths::default_settings_path(),
+        codex_home: codex_plus_core::codex_home::default_codex_home_dir(),
+        user_scripts_dir: scripts_config_dir.join("user_scripts"),
+        user_scripts_config_path: scripts_config_dir.join("user_scripts.json"),
+        automatic_backup_dir: codex_plus_core::paths::default_app_state_dir()
+            .join("config-backups"),
+    }
 }
 
 fn builtin_user_scripts_dir() -> PathBuf {

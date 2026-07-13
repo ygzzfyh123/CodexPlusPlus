@@ -1,25 +1,84 @@
-name: Release assets
+name: Build and publish release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v[0-9]*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
 jobs:
-  windows-installer:
+  verify-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Verify tag and project versions
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="$RELEASE_TAG"
+          VERSION="${TAG#v}"
+          VERSION="${VERSION#V}"
+          [[ "$TAG" =~ ^[vV][0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+
+          mapfile -t CARGO_VERSIONS < <(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].version' | sort -u)
+          test "${#CARGO_VERSIONS[@]}" -eq 1
+          test "${CARGO_VERSIONS[0]}" = "$VERSION"
+
+          VERSION="$VERSION" node <<'NODE'
+          const fs = require("fs");
+          const expected = process.env.VERSION;
+          const packageJson = JSON.parse(fs.readFileSync("apps/codex-plus-manager/package.json", "utf8"));
+          const packageLock = JSON.parse(fs.readFileSync("apps/codex-plus-manager/package-lock.json", "utf8"));
+          const tauri = JSON.parse(fs.readFileSync("apps/codex-plus-manager/src-tauri/tauri.conf.json", "utf8"));
+          const actual = {
+            "package.json": packageJson.version,
+            "package-lock.json": packageLock.version,
+            "package-lock root": packageLock.packages?.[""]?.version,
+            "tauri.conf.json": tauri.version,
+          };
+          for (const [file, version] of Object.entries(actual)) {
+            if (version !== expected) {
+              throw new Error(`${file} version ${version} does not match tag version ${expected}`);
+            }
+          }
+          NODE
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: Windows x64
+    needs: verify-version
     runs-on: windows-latest
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/codex-plus-manager/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -29,7 +88,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: apps/codex-plus-manager
-        run: npm install --package-lock=false
+        run: npm ci
 
       - name: Build frontend
         working-directory: apps/codex-plus-manager
@@ -45,35 +104,29 @@ jobs:
           Copy-Item target/release/codex-plus-plus.exe dist/windows/app/
           Copy-Item target/release/codex-plus-plus-manager.exe dist/windows/app/
 
-      - name: Build Windows zip asset
+      - name: Build Windows assets
         shell: pwsh
         run: |
-          $version = "${{ github.event.release.tag_name }}".TrimStart("v", "V")
-          New-Item -ItemType Directory -Force dist/windows | Out-Null
+          $version = "${{ needs.verify-version.outputs.version }}"
           Compress-Archive -Path dist/windows/app/* -DestinationPath "dist/windows/CodexPlusPlus-$version-windows-x64.zip" -Force
-
-      - name: Build Windows installer
-        shell: pwsh
-        run: |
-          $version = "${{ github.event.release.tag_name }}".TrimStart("v", "V")
           $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
-          if (-not (Test-Path $makensis)) {
-            $makensis = "makensis"
-          }
+          if (-not (Test-Path $makensis)) { $makensis = "makensis" }
           Push-Location scripts/installer/windows
           & $makensis "/INPUTCHARSET" "UTF8" "/DVERSION=$version" CodexPlusPlus.nsi
           Pop-Location
 
-      - name: Upload Windows installer
-        uses: softprops/action-gh-release@v2
+      - name: Upload Windows workflow artifact
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ github.event.release.tag_name }}
-          files: |
+          name: release-windows-x64
+          path: |
             dist/windows/*.exe
             dist/windows/*.zip
+          if-no-files-found: error
 
-  macos-dmg:
-    name: macOS DMG (${{ matrix.arch }})
+  macos:
+    name: macOS ${{ matrix.arch }}
+    needs: verify-version
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -89,12 +142,14 @@ jobs:
       - name: Checkout release tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/codex-plus-manager/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -103,7 +158,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: apps/codex-plus-manager
-        run: npm install --package-lock=false
+        run: npm ci
 
       - name: Build frontend
         working-directory: apps/codex-plus-manager
@@ -112,23 +167,19 @@ jobs:
       - name: Build binaries
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Build macOS DMG
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          VERSION="${VERSION#V}"
-          BINARY_DIR="$PWD/target/${{ matrix.target }}/release" bash scripts/installer/macos/package-dmg.sh "$VERSION" "${{ matrix.arch }}"
-
-      - name: Build macOS zip asset
+      - name: Build macOS assets
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          VERSION="${VERSION#V}"
+          set -euo pipefail
+          VERSION="${{ needs.verify-version.outputs.version }}"
+          BINARY_DIR="$PWD/target/${{ matrix.target }}/release" bash scripts/installer/macos/package-dmg.sh "$VERSION" "${{ matrix.arch }}"
           mkdir -p dist/macos/app-${{ matrix.arch }}
           cp "target/${{ matrix.target }}/release/codex-plus-plus" "dist/macos/app-${{ matrix.arch }}/"
           cp "target/${{ matrix.target }}/release/codex-plus-plus-manager" "dist/macos/app-${{ matrix.arch }}/"
           (cd dist/macos && zip -r "CodexPlusPlus-${VERSION}-macos-${{ matrix.arch }}.zip" "app-${{ matrix.arch }}")
 
       - name: Verify macOS bundle structure
+        shell: bash
         run: |
           set -euo pipefail
           test -L "dist/macos/stage/Applications"
@@ -139,58 +190,56 @@ jobs:
             test -x "$app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
             plutil -lint "$app/Contents/Info.plist" >/dev/null
             codesign -dv "$app" >/dev/null 2>&1
-            echo "verified: $app"
           done
 
-      - name: Upload macOS DMG
-        uses: softprops/action-gh-release@v2
+      - name: Upload macOS workflow artifact
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ github.event.release.tag_name }}
-          files: |
+          name: release-macos-${{ matrix.arch }}
+          path: |
             dist/macos/*.dmg
             dist/macos/*.zip
+          if-no-files-found: error
 
-  latest-json:
-    name: Upload static latest.json
-    runs-on: ubuntu-latest
+  publish:
+    name: Publish GitHub Release
     needs:
-      - windows-installer
-      - macos-dmg
+      - verify-version
+      - windows
+      - macos
+    runs-on: ubuntu-latest
     steps:
-      - name: Generate latest.json
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          TAG: ${{ github.event.release.tag_name }}
+      - name: Download all release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist/release
+          merge-multiple: true
+
+      - name: Verify release assets
         shell: bash
         run: |
           set -euo pipefail
-          gh release view "$TAG" --repo "$REPO" --json assets,body,tagName,url > release.json
-          node <<'NODE'
-          const fs = require("fs");
-          const release = JSON.parse(fs.readFileSync("release.json", "utf8"));
-          const repo = process.env.REPO;
-          const tag = release.tagName || process.env.TAG;
-          const version = tag.replace(/^v/i, "");
-          const baseUrl = `https://github.com/${repo}/releases/download/${tag}`;
-          const assets = (release.assets || [])
-            .map((asset) => asset.name)
-            .filter((name) => name !== "latest.json")
-            .map((name) => ({ name, url: `${baseUrl}/${encodeURIComponent(name)}` }));
-          const payload = {
-            version: `v${version}`,
-            url: release.url || `https://github.com/${repo}/releases/tag/${tag}`,
-            body: release.body || "",
-            assets
-          };
-          fs.writeFileSync("latest.json", `${JSON.stringify(payload, null, 2)}\n`);
-          NODE
-          cat latest.json
+          VERSION="${{ needs.verify-version.outputs.version }}"
+          test -f "dist/release/CodexPlusPlus-${VERSION}-windows-x64-setup.exe"
+          test -f "dist/release/CodexPlusPlus-${VERSION}-windows-x64.zip"
+          test -f "dist/release/CodexPlusPlus-${VERSION}-macos-x64.dmg"
+          test -f "dist/release/CodexPlusPlus-${VERSION}-macos-x64.zip"
+          test -f "dist/release/CodexPlusPlus-${VERSION}-macos-arm64.dmg"
+          test -f "dist/release/CodexPlusPlus-${VERSION}-macos-arm64.zip"
 
-      - name: Upload latest.json
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event.release.tag_name }}
-          REPO: ${{ github.repository }}
         shell: bash
-        run: gh release upload "$TAG" latest.json --clobber --repo "$REPO"
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/release/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$RELEASE_TAG" dist/release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "Codex++ ${{ needs.verify-version.outputs.version }}" \
+              --generate-notes
+          fi

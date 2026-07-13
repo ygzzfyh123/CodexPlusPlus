@@ -16,7 +16,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save as saveFile } from "@tauri-apps/plugin-dialog";
 import {
   ArrowLeft,
   Bell,
@@ -50,6 +50,7 @@ import {
   Sun,
   TestTube,
   Trash2,
+  Upload,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -1475,6 +1476,50 @@ export function App() {
     }
   };
 
+  const exportFullConfig = async () => {
+    let selected: string | null;
+    try {
+      selected = await saveFile({
+        title: t("导出完整 Codex++ 配置"),
+        defaultPath: `CodexPlusPlus-config-${new Date().toISOString().slice(0, 10)}.json`,
+        filters: [{ name: t("Codex++ 配置备份"), extensions: ["json"] }],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showNotice(t("配置导出"), tf("打开保存选择器失败：{0}", [message]), "failed");
+      return;
+    }
+    if (!selected) return;
+    const result = await run(() => call<CommandResult<{ path?: string }>>("export_full_config", { path: selected }));
+    if (result) showNotice(t("配置导出"), result.message, result.status);
+  };
+
+  const importFullConfig = async () => {
+    let selected: string | string[] | null;
+    try {
+      selected = await open({
+        directory: false,
+        multiple: false,
+        title: t("导入完整 Codex++ 配置"),
+        filters: [{ name: t("Codex++ 配置备份"), extensions: ["json"] }],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showNotice(t("配置导入"), tf("打开文件选择器失败：{0}", [message]), "failed");
+      return;
+    }
+    if (typeof selected !== "string" || !selected.trim()) return;
+    const result = await run(() =>
+      call<CommandResult<{ automaticBackupPath?: string }>>("import_full_config", { path: selected.trim() }),
+    );
+    if (!result) return;
+    if (isSuccessStatus(result.status)) {
+      await refreshSettings(true);
+      await refreshRelay(true);
+    }
+    showNotice(t("配置导入"), result.message, result.status);
+  };
+
   const resetSettings = async () => {
     const result = await run(() => call<SettingsResult>("reset_settings"));
     if (result) {
@@ -1947,6 +1992,8 @@ export function App() {
       performUpdate,
       saveSettings,
       saveSettingsValue,
+      exportFullConfig,
+      importFullConfig,
       refreshSettings,
       resetSettings,
       resetImageOverlaySettings,
@@ -2297,6 +2344,8 @@ type Actions = {
   performUpdate: () => Promise<void>;
   saveSettings: () => Promise<void>;
   saveSettingsValue: (settings: BackendSettings, silent?: boolean) => Promise<void>;
+  exportFullConfig: () => Promise<void>;
+  importFullConfig: () => Promise<void>;
   refreshSettings: (silent?: boolean) => Promise<BackendSettings | null>;
   resetSettings: () => Promise<void>;
   resetImageOverlaySettings: () => Promise<void>;
@@ -3480,7 +3529,11 @@ function AboutScreen({
           <TaskProgressBox completedTitle={t("上次更新结果")} progress={updateInstallProgress} title={t("安装包更新进度")} />
           <Toolbar>
             <Button onClick={() => void actions.checkUpdate()}>{t("检查更新")}</Button>
-            <Button disabled={updateInstallProgress.active} variant="secondary" onClick={() => void actions.performUpdate()}>
+            <Button
+              disabled={updateInstallProgress.active || !update?.updateAvailable || !update.assetUrl}
+              variant="secondary"
+              onClick={() => void actions.performUpdate()}
+            >
               {updateInstallProgress.active ? t("正在下载安装包…") : t("下载并运行安装包")}
             </Button>
           </Toolbar>
@@ -3732,6 +3785,25 @@ function SettingsScreen({
             <Button onClick={() => void actions.saveSettings()}>{t("保存设置")}</Button>
             <Button variant="secondary" onClick={() => void actions.resetImageOverlaySettings()}>
               {t("重置背景")}
+            </Button>
+          </Toolbar>
+        </CardContent>
+      </Panel>
+      <Panel>
+        <CardHead title={t("完整配置备份")} detail={t("用于迁移或恢复 Codex++ 的完整配置")} />
+        <CardContent>
+          <div className="hint-line">
+            <ShieldAlert className="h-4 w-4" />
+            <span>{t("导出文件包含供应商 API Key、Codex 登录信息和用户脚本，请仅保存在可信位置。")}</span>
+          </div>
+          <Toolbar>
+            <Button onClick={() => void actions.exportFullConfig()}>
+              <Download className="h-4 w-4" />
+              {t("导出完整配置")}
+            </Button>
+            <Button variant="secondary" onClick={() => void actions.importFullConfig()}>
+              <Upload className="h-4 w-4" />
+              {t("导入完整配置")}
             </Button>
           </Toolbar>
         </CardContent>

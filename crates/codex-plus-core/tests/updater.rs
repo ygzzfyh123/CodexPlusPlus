@@ -1,5 +1,6 @@
 use codex_plus_core::update::{
-    Release, download_asset_to, is_newer_version, parse_version_tag, release_from_github_payload,
+    MAX_RELEASE_SUMMARY_CHARS, MAX_RELEASE_SUMMARY_LINES, Release, bounded_release_summary,
+    download_asset_to, is_newer_version, parse_version_tag, release_from_github_payload,
     release_from_latest_json_payload, safe_asset_name, select_update_asset,
 };
 use serde_json::json;
@@ -9,6 +10,13 @@ fn parse_version_tag_accepts_prefix_and_suffix() {
     assert_eq!(parse_version_tag("v1.2.3").unwrap(), vec![1, 2, 3]);
     assert_eq!(parse_version_tag("1.2.3").unwrap(), vec![1, 2, 3]);
     assert_eq!(parse_version_tag("v1.2.3-beta.1").unwrap(), vec![1, 2, 3]);
+    assert_eq!(
+        parse_version_tag("1.2.3.0+build.4").unwrap(),
+        vec![1, 2, 3, 0]
+    );
+    assert!(parse_version_tag("release-1.2.3").is_err());
+    assert!(parse_version_tag("v1.2.3windows").is_err());
+    assert!(parse_version_tag("v1..3").is_err());
 }
 
 #[test]
@@ -16,6 +24,21 @@ fn version_comparison_uses_numeric_segments() {
     assert!(is_newer_version("v1.0.10", "1.0.4").unwrap());
     assert!(!is_newer_version("v1.0.4", "1.0.4").unwrap());
     assert!(!is_newer_version("v1.0.3", "1.0.4").unwrap());
+    assert!(!is_newer_version("v1.2.36.0", "1.2.36").unwrap());
+}
+
+#[test]
+fn release_summary_is_bounded_by_lines_and_characters() {
+    let long = (0..30)
+        .map(|index| format!("line {index}: {}", "x".repeat(150)))
+        .collect::<Vec<_>>()
+        .join("\r\n");
+    let summary = bounded_release_summary(&long);
+
+    assert!(summary.lines().count() <= MAX_RELEASE_SUMMARY_LINES + 2);
+    assert!(summary.chars().count() <= MAX_RELEASE_SUMMARY_CHARS + 32);
+    assert!(summary.contains("[Release notes truncated]"));
+    assert!(!summary.contains('\r'));
 }
 
 #[test]
@@ -47,6 +70,25 @@ fn github_payload_selects_platform_installer() {
     } else {
         assert_eq!(release.asset_name.as_deref(), None);
     }
+}
+
+#[test]
+fn github_payload_rejects_non_stable_releases() {
+    let draft = json!({
+        "tag_name": "v9.0.0",
+        "draft": true,
+        "prerelease": false,
+        "assets": []
+    });
+    let prerelease = json!({
+        "tag_name": "v9.0.0-beta.1",
+        "draft": false,
+        "prerelease": true,
+        "assets": []
+    });
+
+    assert!(release_from_github_payload(&draft).is_err());
+    assert!(release_from_github_payload(&prerelease).is_err());
 }
 
 #[test]
@@ -142,6 +184,32 @@ fn asset_selection_distinguishes_x64_and_arm64_macos_dmgs() {
         );
     } else {
         // Non-macOS platforms should not pick either macOS DMG.
+        assert!(select_update_asset(&assets).is_none());
+    }
+}
+
+#[test]
+fn asset_selection_understands_alternative_macos_arch_names() {
+    let assets = vec![
+        (
+            "CodexPlusPlus-macos-aarch64.dmg".to_string(),
+            "https://example.test/app-aarch64.dmg".to_string(),
+        ),
+        (
+            "CodexPlusPlus-macos-amd64.dmg".to_string(),
+            "https://example.test/app-amd64.dmg".to_string(),
+        ),
+    ];
+
+    if cfg!(target_os = "macos") {
+        let selected = select_update_asset(&assets).unwrap();
+        let expected = match std::env::consts::ARCH {
+            "x86_64" => "CodexPlusPlus-macos-amd64.dmg",
+            "aarch64" => "CodexPlusPlus-macos-aarch64.dmg",
+            other => panic!("unexpected target arch in test: {other}"),
+        };
+        assert_eq!(selected.name, expected);
+    } else {
         assert!(select_update_asset(&assets).is_none());
     }
 }

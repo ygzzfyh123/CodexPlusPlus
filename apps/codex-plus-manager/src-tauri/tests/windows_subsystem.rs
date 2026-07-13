@@ -183,7 +183,7 @@ fn github_release_workflow_builds_separate_macos_x64_and_arm64_dmgs() {
 }
 
 #[test]
-fn github_release_workflow_uploads_static_latest_json() {
+fn github_release_workflow_verifies_versions_and_publishes_after_all_builds() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let workflow = manifest_dir
         .parent()
@@ -193,9 +193,12 @@ fn github_release_workflow_uploads_static_latest_json() {
         .join(".github/workflows/release-assets.yml");
     let workflow = std::fs::read_to_string(&workflow).expect("read release assets workflow");
 
-    assert!(workflow.contains("latest-json:"));
-    assert!(workflow.contains("latest.json"));
-    assert!(workflow.contains("gh release upload \"$TAG\" latest.json --clobber"));
+    assert!(workflow.contains("verify-version:"));
+    assert!(workflow.contains("tags:"));
+    assert!(workflow.contains("cargo metadata --no-deps"));
+    assert!(workflow.contains("Publish GitHub Release"));
+    assert!(workflow.contains("gh release create \"$RELEASE_TAG\" dist/release/*"));
+    assert!(!workflow.contains("latest.json"));
 }
 
 #[test]

@@ -58,6 +58,8 @@ pub fn run() {
             commands::restart_codex_plus,
             commands::load_settings,
             commands::save_settings,
+            commands::export_full_config,
+            commands::import_full_config,
             commands::load_ccs_providers,
             commands::import_ccs_providers,
             commands::load_pending_provider_import,
