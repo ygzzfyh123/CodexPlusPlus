@@ -21,7 +21,7 @@ use codex_plus_core::launcher::{WindowsProcessControlStrategy, windows_process_c
 use codex_plus_core::ports::{
     select_packaged_codex_debug_port_with, select_platform_loopback_port_with,
 };
-use codex_plus_core::settings::{BackendSettings, RelayProfile, RelayProtocol};
+use codex_plus_core::settings::{BackendSettings, RelayMode, RelayProfile, RelayProtocol};
 use codex_plus_core::status::StatusStore;
 
 #[test]
@@ -1031,6 +1031,49 @@ async fn launch_lifecycle_does_not_apply_relay_profile_before_launching_codex() 
     let events = events.lock().unwrap().clone();
     assert!(!events.contains(&"apply-relay".to_string()));
     assert!(events.contains(&"launch:9229".to_string()));
+}
+
+#[tokio::test]
+async fn launch_lifecycle_applies_custom_models_profile_before_launching_codex() {
+    let temp = tempfile::tempdir().unwrap();
+    let app_dir = temp.path().join("Codex.app");
+    std::fs::create_dir_all(&app_dir).unwrap();
+    let status_store = StatusStore::new(temp.path().join("latest-status.json"));
+    let events = Arc::new(Mutex::new(Vec::<String>::new()));
+    let hooks = FakeHooks::new(events.clone()).with_settings(BackendSettings {
+        relay_profiles_enabled: true,
+        active_relay_id: "custom-models".to_string(),
+        relay_profiles: vec![RelayProfile {
+            id: "custom-models".to_string(),
+            relay_mode: RelayMode::CustomModels,
+            ..RelayProfile::default()
+        }],
+        ..BackendSettings::default()
+    });
+
+    let handle = launch_and_inject_with_hooks(
+        LaunchOptions {
+            app_dir: Some(app_dir),
+            debug_port: 9229,
+            helper_port: 57321,
+            status_store,
+        },
+        &hooks,
+    )
+    .await
+    .unwrap();
+    handle.wait_for_codex_exit().await.unwrap();
+
+    let events = events.lock().unwrap().clone();
+    let apply_index = events
+        .iter()
+        .position(|event| event == "apply-relay")
+        .unwrap();
+    let launch_index = events
+        .iter()
+        .position(|event| event == "launch:9229")
+        .unwrap();
+    assert!(apply_index < launch_index);
 }
 
 #[tokio::test]

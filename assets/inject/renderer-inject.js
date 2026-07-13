@@ -4541,7 +4541,7 @@
     return Array.from(new Set(values.filter((value) => typeof value === "string" && value.trim().length > 0)));
   }
 
-  let codexModelCatalog = { status: "loading", model: "", default_model: "", model_provider: "", provider_name: "", models: [], sources: [], responses_api: { status: "unknown", message: "" } };
+  let codexModelCatalog = { status: "loading", model: "", default_model: "", model_provider: "", provider_name: "", models: [], model_details: [], sources: [], responses_api: { status: "unknown", message: "" } };
   let codexModelCatalogLoadedAt = 0;
   let codexModelCatalogPromise = null;
   let codexModelWhitelistRefreshTimer = 0;
@@ -4561,6 +4561,7 @@
           model_provider: "",
           provider_name: "",
           models: [],
+          model_details: [],
           sources: [],
           responses_api: { status: "unknown", message: "" },
           ...catalog,
@@ -4601,7 +4602,7 @@
     if (!force && codexModelCatalogLoadedAt && Date.now() - codexModelCatalogLoadedAt < 10000) return codexModelCatalog;
     codexModelCatalogPromise = postJson("/codex-model-catalog", {})
       .then(async (result) => {
-        codexModelCatalog = result && typeof result === "object" ? result : { status: "failed", model: "", default_model: "", model_provider: "", provider_name: "", models: [], sources: [], responses_api: { status: "unknown", message: "" } };
+        codexModelCatalog = result && typeof result === "object" ? result : { status: "failed", model: "", default_model: "", model_provider: "", provider_name: "", models: [], model_details: [], sources: [], responses_api: { status: "unknown", message: "" } };
         if ((!codexModelCatalog.models || codexModelCatalog.models.length === 0) && codexModelCatalog.status === "not_configured") {
           try {
             const settingsPromise = postJson("/settings/get", {});
@@ -4624,6 +4625,23 @@
                 if (extraModels.length > 0) {
                   codexModelCatalog.models = extraModels;
                   codexModelCatalog.default_model = codexModelCatalog.default_model || extraModels[0];
+                  codexModelCatalog.model_details = customModelEntries
+                    .map((item) => {
+                      const modelName = String(item?.model || "").trim();
+                      const contextWindow = Number.parseInt(String(item?.contextWindow || ""), 10);
+                      const compactPercent = Number.parseInt(String(item?.autoCompactPercent || ""), 10);
+                      return {
+                        model: modelName,
+                        slug: modelName,
+                        context_window: Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : null,
+                        max_context_window: Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : null,
+                        effective_context_window_percent: 100,
+                        auto_compact_token_limit: item?.autoCompactEnabled && Number.isFinite(contextWindow) && contextWindow > 0
+                          ? Math.max(1, Math.min(contextWindow, Math.floor(contextWindow * (Number.isFinite(compactPercent) ? compactPercent : 80) / 100)))
+                          : null,
+                      };
+                    })
+                    .filter((item) => item.model);
                   sendCodexPlusDiagnostic("model_catalog_fallback_applied", { count: extraModels.length });
                 }
               }
@@ -4638,7 +4656,7 @@
         return codexModelCatalog;
       })
       .catch((error) => {
-        codexModelCatalog = { status: "failed", message: String(error?.message || error), model: "", default_model: "", model_provider: "", provider_name: "", models: [], sources: [], responses_api: { status: "unknown", message: "" } };
+        codexModelCatalog = { status: "failed", message: String(error?.message || error), model: "", default_model: "", model_provider: "", provider_name: "", models: [], model_details: [], sources: [], responses_api: { status: "unknown", message: "" } };
         codexModelCatalogLoadedAt = Date.now();
         return codexModelCatalog;
       })
@@ -4652,8 +4670,37 @@
     return ["minimal", "low", "medium", "high", "xhigh"].map((reasoningEffort) => ({ reasoningEffort, description: `${reasoningEffort} effort` }));
   }
 
+  function codexPlusModelDetail(modelName) {
+    const details = Array.isArray(codexModelCatalog.model_details) ? codexModelCatalog.model_details : [];
+    return details.find((item) => item && (item.model === modelName || item.slug === modelName)) || null;
+  }
+
+  function applyCodexPlusModelMetadata(target, modelName) {
+    const detail = codexPlusModelDetail(modelName);
+    if (!target || !detail) return false;
+    let changed = false;
+    const contextWindow = Number(detail.context_window);
+    const maxContextWindow = Number(detail.max_context_window || detail.context_window);
+    const effectivePercent = Number(detail.effective_context_window_percent || 100);
+    const autoCompactLimit = Number(detail.auto_compact_token_limit);
+    const assign = (key, value) => {
+      if (!Number.isFinite(value) || value <= 0 || target[key] === value) return;
+      target[key] = value;
+      changed = true;
+    };
+    assign("context_window", contextWindow);
+    assign("contextWindow", contextWindow);
+    assign("max_context_window", maxContextWindow);
+    assign("maxContextWindow", maxContextWindow);
+    assign("effective_context_window_percent", effectivePercent);
+    assign("effectiveContextWindowPercent", effectivePercent);
+    assign("auto_compact_token_limit", autoCompactLimit);
+    assign("autoCompactTokenLimit", autoCompactLimit);
+    return changed;
+  }
+
   function codexPlusModelDescriptor(modelName) {
-    return {
+    const descriptor = {
       model: modelName,
       id: modelName,
       slug: modelName,
@@ -4665,6 +4712,8 @@
       defaultReasoningEffort: "medium",
       supportedReasoningEfforts: modelReasoningEfforts(),
     };
+    applyCodexPlusModelMetadata(descriptor, modelName);
+    return descriptor;
   }
 
   function modelArrayLooksPatchable(value, allowEmpty = false) {
@@ -4700,6 +4749,9 @@
     models.forEach((item) => {
       if (customModels.includes(item.model) && item.hidden !== false) {
         item.hidden = false;
+        changed = true;
+      }
+      if (customModels.includes(item.model) && applyCodexPlusModelMetadata(item, item.model)) {
         changed = true;
       }
     });

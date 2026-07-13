@@ -73,6 +73,7 @@ pub async fn read_codex_model_catalog() -> Value {
 
 fn relay_profile_model_catalog_value(home: &Path, profile: &RelayProfile) -> Value {
     let models = relay_profile_model_ids(profile);
+    let model_details = relay_profile_model_details(profile);
     let model = profile.model.trim().to_string();
     let default_model = models.first().cloned().unwrap_or_default();
     let provider_name = if profile.name.trim().is_empty() {
@@ -89,6 +90,7 @@ fn relay_profile_model_catalog_value(home: &Path, profile: &RelayProfile) -> Val
         "provider_name": provider_name,
         "default_model": default_model,
         "models": models,
+        "model_details": model_details,
         "sources": [
             {
                 "id": format!("relay-profile:{}", profile.id),
@@ -102,6 +104,41 @@ fn relay_profile_model_catalog_value(home: &Path, profile: &RelayProfile) -> Val
         ],
         "responses_api": responses_api_status("unknown", "", "")
     })
+}
+
+fn relay_profile_model_details(profile: &RelayProfile) -> Vec<Value> {
+    if profile.relay_mode != RelayMode::CustomModels {
+        return Vec::new();
+    }
+
+    profile
+        .custom_models
+        .iter()
+        .filter_map(|model| {
+            let slug = model.model.trim();
+            if slug.is_empty() {
+                return None;
+            }
+            let context_window =
+                crate::settings::parse_context_window_tokens(&model.context_window);
+            let auto_compact_token_limit = context_window
+                .filter(|_| model.auto_compact_enabled)
+                .map(|window| {
+                    crate::settings::auto_compact_limit_from_percent(
+                        window,
+                        model.auto_compact_percent,
+                    )
+                });
+            Some(json!({
+                "model": slug,
+                "slug": slug,
+                "context_window": context_window,
+                "max_context_window": context_window,
+                "effective_context_window_percent": 100,
+                "auto_compact_token_limit": auto_compact_token_limit,
+            }))
+        })
+        .collect()
 }
 
 fn relay_profile_model_ids(profile: &RelayProfile) -> Vec<String> {
@@ -802,6 +839,31 @@ mod tests {
         };
 
         assert_eq!(relay_profile_model_ids(&profile), model_names);
+    }
+
+    #[test]
+    fn custom_models_catalog_exposes_per_model_context_metadata() {
+        let profile = RelayProfile {
+            relay_mode: RelayMode::CustomModels,
+            custom_models: vec![CustomRelayModel {
+                id: "grok".to_string(),
+                model: "grok-4.5".to_string(),
+                context_window: "500000".to_string(),
+                auto_compact_enabled: true,
+                auto_compact_percent: 80,
+                ..CustomRelayModel::default()
+            }],
+            default_custom_model_id: "grok".to_string(),
+            ..RelayProfile::default()
+        };
+
+        let catalog = relay_profile_model_catalog_value(Path::new("codex-home"), &profile);
+        assert_eq!(catalog["model_details"][0]["model"], "grok-4.5");
+        assert_eq!(catalog["model_details"][0]["context_window"], 500_000);
+        assert_eq!(
+            catalog["model_details"][0]["auto_compact_token_limit"],
+            400_000
+        );
     }
 }
 

@@ -3042,6 +3042,50 @@ experimental_bearer_token = "codex-plus-custom"
 }
 
 #[test]
+fn normalize_custom_models_removes_stale_root_context_limits() {
+    let mut profile = RelayProfile {
+        id: "custom-models".to_string(),
+        relay_mode: RelayMode::CustomModels,
+        config_contents: r#"model = "grok-4.5"
+model_provider = "custom"
+model_context_window = 250000
+model_auto_compact_token_limit = 200000
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "http://127.0.0.1:57321/v1"
+experimental_bearer_token = "codex-plus-custom"
+"#
+        .to_string(),
+        custom_models: vec![CustomRelayModel {
+            id: "grok".to_string(),
+            model: "grok-4.5".to_string(),
+            base_url: "https://example.test/v1".to_string(),
+            api_key: "test-key".to_string(),
+            context_window: "500000".to_string(),
+            auto_compact_enabled: true,
+            auto_compact_percent: 80,
+            ..CustomRelayModel::default()
+        }],
+        default_custom_model_id: "grok".to_string(),
+        ..RelayProfile::default()
+    };
+
+    normalize_relay_profile_for_storage(&mut profile).unwrap();
+
+    assert!(!profile.config_contents.contains("model_context_window"));
+    assert!(
+        !profile
+            .config_contents
+            .contains("model_auto_compact_token_limit")
+    );
+    assert_eq!(profile.context_window, "500000");
+    assert_eq!(profile.auto_compact_limit, "400000");
+}
+
+#[test]
 fn apply_relay_profile_no_catalog_when_model_list_has_no_suffix() {
     let temp = tempfile::tempdir().unwrap();
     let profile = RelayProfile {

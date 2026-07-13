@@ -13,7 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-use crate::settings::{BackendSettings, SettingsStore, normalize_codex_extra_args};
+use crate::settings::{BackendSettings, RelayMode, SettingsStore, normalize_codex_extra_args};
 use crate::status::{LaunchStatus, StatusStore};
 
 #[cfg(windows)]
@@ -260,6 +260,11 @@ where
     let result: anyhow::Result<LaunchHandle> = async {
         if settings.provider_sync_enabled {
             hooks.run_provider_sync().await?;
+        }
+        if settings.relay_profiles_enabled
+            && settings.active_relay_profile().relay_mode == RelayMode::CustomModels
+        {
+            hooks.apply_active_relay_profile(&settings).await?;
         }
         if let Err(error) = hooks.ensure_plugin_marketplace_config(&settings).await {
             let _ = crate::diagnostic_log::append_diagnostic_log(

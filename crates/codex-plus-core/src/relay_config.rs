@@ -2188,7 +2188,9 @@ pub fn normalize_relay_profile_for_storage(profile: &mut RelayProfile) -> anyhow
     profile.migrate_legacy_auto_compact_fields();
     if profile.relay_mode == crate::settings::RelayMode::CustomModels {
         normalize_custom_models_profile(profile)?;
-        profile.config_contents = complete_relay_profile_config(profile)?;
+        let completed_config = complete_relay_profile_config(profile)?;
+        profile.config_contents =
+            apply_profile_context_limits_to_config(profile, &completed_config)?;
         profile.auth_contents = serde_json::to_string_pretty(&json!({
             "OPENAI_API_KEY": "codex-plus-custom"
         }))?;
