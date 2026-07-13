@@ -360,11 +360,7 @@ pub fn apply_relay_profile_files_to_home_with_context(
     let config_with_common = merge_common_config_into_config(&profile_config, &selected_common)?;
     let config_with_common =
         preserve_unmanaged_live_context_entries(home, &config_with_common, common_config_contents)?;
-    let config_with_limits = apply_context_limits_to_config(
-        &config_with_common,
-        &profile.context_window,
-        &profile.effective_auto_compact_limit(),
-    )?;
+    let config_with_limits = apply_profile_context_limits_to_config(profile, &config_with_common)?;
     let config_with_catalog = apply_model_catalog_to_config(home, profile, &config_with_limits)?;
     apply_relay_files_to_home(home, &config_with_catalog, &profile.auth_contents)
 }
@@ -397,11 +393,7 @@ pub fn apply_relay_profile_to_home_with_switch_rules_and_computer_use_guard(
     let config_with_common = merge_common_config_into_config(&profile_config, &selected_common)?;
     let config_with_common =
         preserve_unmanaged_live_context_entries(home, &config_with_common, common_config_contents)?;
-    let config_with_limits = apply_context_limits_to_config(
-        &config_with_common,
-        &profile.context_window,
-        &profile.effective_auto_compact_limit(),
-    )?;
+    let config_with_limits = apply_profile_context_limits_to_config(profile, &config_with_common)?;
     let config_with_catalog = apply_model_catalog_to_config(home, profile, &config_with_limits)?;
 
     if profile.relay_mode == crate::settings::RelayMode::PureApi {
@@ -434,11 +426,7 @@ pub fn apply_relay_profile_config_to_home_with_context(
     };
     let profile_config = complete_relay_profile_config(profile)?;
     let config_with_common = merge_common_config_into_config(&profile_config, &selected_common)?;
-    let config_with_limits = apply_context_limits_to_config(
-        &config_with_common,
-        &profile.context_window,
-        &profile.effective_auto_compact_limit(),
-    )?;
+    let config_with_limits = apply_profile_context_limits_to_config(profile, &config_with_common)?;
     let config_with_catalog = apply_model_catalog_to_config(home, profile, &config_with_limits)?;
     apply_relay_config_file_to_home(home, &config_with_catalog)
 }
@@ -1460,6 +1448,24 @@ fn apply_context_limits_to_config(
         doc["model_auto_compact_token_limit"] = toml_edit::value(value as i64);
     }
     Ok(normalize_optional_toml(doc))
+}
+
+fn apply_profile_context_limits_to_config(
+    profile: &RelayProfile,
+    config_text: &str,
+) -> anyhow::Result<String> {
+    if profile.relay_mode == crate::settings::RelayMode::CustomModels {
+        let mut doc = parse_toml_document(config_text)?;
+        doc.as_table_mut().remove("model_context_window");
+        doc.as_table_mut().remove("model_auto_compact_token_limit");
+        return Ok(normalize_optional_toml(doc));
+    }
+
+    apply_context_limits_to_config(
+        config_text,
+        &profile.context_window,
+        &profile.effective_auto_compact_limit(),
+    )
 }
 
 fn apply_model_catalog_to_config(

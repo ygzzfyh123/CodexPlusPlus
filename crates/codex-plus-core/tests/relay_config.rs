@@ -13,7 +13,9 @@ use codex_plus_core::relay_config::{
     set_codex_goals_feature_in_home, strip_common_config_from_config,
     sync_live_config_context_entries, upsert_context_entry_in_common_config,
 };
-use codex_plus_core::settings::{RelayContextSelection, RelayMode, RelayProfile, RelayProtocol};
+use codex_plus_core::settings::{
+    CustomRelayModel, RelayContextSelection, RelayMode, RelayProfile, RelayProtocol,
+};
 
 fn write_remote_plugin_marketplace_snapshot(home: &std::path::Path) {
     let root = home.join(".tmp").join("plugins-remote");
@@ -2959,6 +2961,84 @@ experimental_bearer_token = "sk-new"
     // 后缀不得进入 catalog 或 config
     assert!(!catalog.contains("[1M]"));
     assert!(!config.contains("[1M]"));
+}
+
+#[test]
+fn custom_models_use_per_model_context_limits_without_root_override() {
+    let temp = tempfile::tempdir().unwrap();
+    let profile = RelayProfile {
+        id: "custom-models".to_string(),
+        name: "Custom Models".to_string(),
+        relay_mode: RelayMode::CustomModels,
+        model: "gpt-5.5".to_string(),
+        context_window: "250000".to_string(),
+        auto_compact_enabled: true,
+        auto_compact_percent: 80,
+        auto_compact_limit: "200000".to_string(),
+        config_contents: r#"model = "gpt-5.5"
+model_provider = "custom"
+model_context_window = 250000
+model_auto_compact_token_limit = 200000
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "http://127.0.0.1:57321/v1"
+experimental_bearer_token = "codex-plus-custom"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"codex-plus-custom"}"#.to_string(),
+        custom_models: vec![
+            CustomRelayModel {
+                id: "default-model".to_string(),
+                model: "gpt-5.5".to_string(),
+                base_url: "https://example.test/v1".to_string(),
+                api_key: "test-key".to_string(),
+                context_window: "250000".to_string(),
+                auto_compact_enabled: true,
+                auto_compact_percent: 80,
+                ..CustomRelayModel::default()
+            },
+            CustomRelayModel {
+                id: "sol-model".to_string(),
+                model: "gpt-5.6-sol".to_string(),
+                base_url: "https://example.test/v1".to_string(),
+                api_key: "test-key".to_string(),
+                context_window: "353000".to_string(),
+                auto_compact_enabled: true,
+                auto_compact_percent: 80,
+                ..CustomRelayModel::default()
+            },
+        ],
+        default_custom_model_id: "default-model".to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+
+    let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    assert!(!config.contains("model_context_window"));
+    assert!(!config.contains("model_auto_compact_token_limit"));
+
+    let catalog: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            temp.path()
+                .join("model-catalogs")
+                .join("custom-models.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let models = catalog["models"].as_array().unwrap();
+    let sol = models
+        .iter()
+        .find(|model| model["slug"] == "gpt-5.6-sol")
+        .unwrap();
+    assert_eq!(sol["context_window"], 353_000);
+    assert_eq!(sol["max_context_window"], 353_000);
+    assert_eq!(sol["effective_context_window_percent"], 100);
+    assert_eq!(sol["auto_compact_token_limit"], 282_400);
 }
 
 #[test]
