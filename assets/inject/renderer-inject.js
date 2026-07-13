@@ -4610,8 +4610,17 @@
             if (settingsResp && settingsResp.relayProfiles && Array.isArray(settingsResp.relayProfiles)) {
               const activeId = settingsResp.activeRelayId || "";
               const profile = settingsResp.relayProfiles.find(p => p.id === activeId) || settingsResp.relayProfiles[0];
-              if (profile && profile.modelList) {
-                const extraModels = profile.modelList.split(/[\r\n,]+/).map(s => s.trim()).filter(Boolean);
+              if (profile) {
+                const listedModels = typeof profile.modelList === "string"
+                  ? profile.modelList.split(/[\r\n,]+/).map(s => s.trim()).filter(Boolean)
+                  : [];
+                const customModelEntries = Array.isArray(profile.customModels) ? profile.customModels : [];
+                const defaultCustomModel = customModelEntries.find(item => item?.id === profile.defaultCustomModelId);
+                const customModels = uniqueValues([
+                  String(defaultCustomModel?.model || "").trim(),
+                  ...customModelEntries.map(item => String(item?.model || "").trim()),
+                ]);
+                const extraModels = uniqueValues([...customModels, ...listedModels]);
                 if (extraModels.length > 0) {
                   codexModelCatalog.models = extraModels;
                   codexModelCatalog.default_model = codexModelCatalog.default_model || extraModels[0];

@@ -649,6 +649,8 @@ fn injection_script_unlocks_custom_model_catalog() {
     assert!(script.contains("scheduleCodexModelWhitelistRefresh"));
     assert!(script.contains("runCodexModelWhitelistRefreshPass"));
     assert!(script.contains("model_whitelist_refresh_scheduled"));
+    assert!(script.contains("profile.customModels"));
+    assert!(script.contains("profile.defaultCustomModelId"));
     assert!(script.contains("available_models"));
     assert!(script.contains("modelWhitelistUnlock"));
     assert!(script.contains("isWorkspaceChromeNode"));

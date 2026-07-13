@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::settings::{RelayProfile, RelayProtocol, SettingsStore};
+use crate::settings::{RelayMode, RelayProfile, RelayProtocol, SettingsStore};
 use serde_json::{Value, json};
 
 const BASE_URL_ENV_KEYS: &[&str] = &[
@@ -105,6 +105,26 @@ fn relay_profile_model_catalog_value(home: &Path, profile: &RelayProfile) -> Val
 }
 
 fn relay_profile_model_ids(profile: &RelayProfile) -> Vec<String> {
+    if profile.relay_mode == RelayMode::CustomModels {
+        let default_model = profile
+            .default_custom_model()
+            .map(|model| model.model.as_str())
+            .unwrap_or_default();
+        return unique_strings(
+            std::iter::once(default_model)
+                .chain(
+                    profile
+                        .custom_models
+                        .iter()
+                        .map(|model| model.model.as_str()),
+                )
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect(),
+        );
+    }
+
     unique_strings(
         profile
             .model_list
@@ -745,6 +765,44 @@ fn unique_strings(values: Vec<String>) -> Vec<String> {
         result.push(value.to_string());
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::CustomRelayModel;
+
+    #[test]
+    fn custom_models_catalog_includes_every_configured_model() {
+        let model_names = [
+            "gpt-5.5",
+            "gpt-5.6-luna",
+            "gpt-5.6-terra",
+            "gpt-5.6-sol",
+            "claude-opus-4-6",
+            "gemini-3.1-pro-preview",
+            "grok-4.5",
+            "deepseek-v4-pro",
+            "glm-5.2",
+            "gpt-image-2",
+        ];
+        let profile = RelayProfile {
+            relay_mode: RelayMode::CustomModels,
+            custom_models: model_names
+                .iter()
+                .enumerate()
+                .map(|(index, model)| CustomRelayModel {
+                    id: format!("model-{index}"),
+                    model: (*model).to_string(),
+                    ..CustomRelayModel::default()
+                })
+                .collect(),
+            default_custom_model_id: "model-0".to_string(),
+            ..RelayProfile::default()
+        };
+
+        assert_eq!(relay_profile_model_ids(&profile), model_names);
+    }
 }
 
 fn first_env_value(env: &HashMap<String, String>, names: &[&str]) -> String {
