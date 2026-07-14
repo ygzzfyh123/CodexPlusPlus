@@ -16,6 +16,7 @@ struct LauncherHooks {
     core: Arc<DefaultLaunchHooks>,
     data: Arc<LauncherDataService>,
     runtime: Arc<LauncherRuntimeService>,
+    bridge_context: Arc<Mutex<Option<BridgeContext>>>,
 }
 
 impl Default for LauncherHooks {
@@ -27,6 +28,7 @@ impl Default for LauncherHooks {
                 9229,
                 default_user_script_manager(),
             )),
+            bridge_context: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -339,7 +341,11 @@ impl LaunchHooks for LauncherHooks {
         helper_port: u16,
         ctx: BridgeContext,
     ) -> anyhow::Result<()> {
-        inject_with_context(debug_port, helper_port, ctx, self.runtime.clone()).await
+        *self.bridge_context.lock().unwrap() = Some(ctx.clone());
+        let disconnect =
+            inject_with_context(debug_port, helper_port, ctx, self.runtime.clone()).await?;
+        self.core.set_bridge_disconnect(disconnect).await;
+        Ok(())
     }
 
     async fn inject(&self, debug_port: u16, helper_port: u16) -> anyhow::Result<()> {
@@ -347,8 +353,22 @@ impl LaunchHooks for LauncherHooks {
     }
 
     async fn start_bridge_watchdog(&self, debug_port: u16, helper_port: u16) -> anyhow::Result<()> {
+        let bridge_context = self
+            .bridge_context
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("bridge context is unavailable for reconnect"))?;
+        let runtime = self.runtime.clone();
+        let reconnect: codex_plus_core::launcher::BridgeReconnectHandler = Arc::new(move || {
+            let bridge_context = bridge_context.clone();
+            let runtime = runtime.clone();
+            Box::pin(async move {
+                inject_with_context(debug_port, helper_port, bridge_context, runtime).await
+            })
+        });
         self.core
-            .start_bridge_watchdog(debug_port, helper_port)
+            .start_bridge_connection_watchdog(debug_port, helper_port, reconnect)
             .await
     }
 
@@ -647,11 +667,11 @@ async fn inject_with_context(
     helper_port: u16,
     ctx: BridgeContext,
     runtime: Arc<LauncherRuntimeService>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<codex_plus_core::bridge::BridgeDisconnect> {
     let mut last_error = None;
     for _ in 0..20 {
         match try_inject_with_context(debug_port, helper_port, ctx.clone(), runtime.clone()).await {
-            Ok(()) => return Ok(()),
+            Ok(disconnect) => return Ok(disconnect),
             Err(error) => {
                 last_error = Some(error);
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -666,7 +686,7 @@ async fn try_inject_with_context(
     helper_port: u16,
     ctx: BridgeContext,
     runtime: Arc<LauncherRuntimeService>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<codex_plus_core::bridge::BridgeDisconnect> {
     let targets = codex_plus_core::cdp::list_targets(debug_port).await?;
     let target = codex_plus_core::cdp::pick_injectable_codex_page_target(&targets)?;
     let websocket_url = target
@@ -687,7 +707,7 @@ async fn try_inject_with_context(
     } else {
         vec![script, user_bundle]
     };
-    codex_plus_core::bridge::install_bridge(
+    codex_plus_core::bridge::install_bridge_with_disconnect(
         websocket_url,
         codex_plus_core::bridge::BRIDGE_BINDING_NAME,
         Arc::new(move |path, payload| {

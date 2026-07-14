@@ -1078,7 +1078,7 @@ fn runtime_evaluate_params_sets_expected_flags() {
 }
 
 #[test]
-fn runtime_evaluate_params_can_await_promise_for_bridge_health_checks() {
+fn runtime_evaluate_params_can_await_promises() {
     let params = bridge::runtime_evaluate_params_with_await_promise("Promise.resolve(true)", true);
 
     assert_eq!(params["expression"], "Promise.resolve(true)");
@@ -1087,13 +1087,14 @@ fn runtime_evaluate_params_can_await_promise_for_bridge_health_checks() {
 }
 
 #[test]
-fn bridge_health_check_script_uses_real_backend_round_trip() {
-    let script = bridge::bridge_health_check_script();
+fn injection_script_uses_backend_websocket_instead_of_periodic_heartbeat() {
+    let script = assets::injection_script(57321);
 
-    assert!(script.contains("__codexSessionDeleteBridge"));
-    assert!(script.contains("/backend/status"));
-    assert!(script.contains("Promise.race"));
-    assert!(script.contains("setTimeout"));
+    assert!(script.contains("/backend/events"));
+    assert!(script.contains("new WebSocket"));
+    assert!(script.contains("connectBackendStatusStream"));
+    assert!(!script.contains("__codexPlusBackendHeartbeat"));
+    assert!(!script.contains("scheduleBackendHeartbeat"));
 }
 
 #[test]
@@ -1587,6 +1588,33 @@ async fn install_bridge_returns_after_installing_and_keeps_message_pump_alive() 
         .await
         .expect("server task should finish without panicking");
     assert!(handled.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn install_bridge_reports_cdp_disconnect_without_health_polling() {
+    let (url, request_rx) = spawn_cdp_server(|mut socket| async move {
+        for expected_id in 1..=5 {
+            let command = recv_json(&mut socket).await;
+            assert_eq!(command["id"], expected_id);
+            send_json(&mut socket, json!({ "id": expected_id, "result": {} })).await;
+        }
+        close_socket(&mut socket).await;
+    })
+    .await;
+
+    let disconnect =
+        bridge::install_bridge_with_disconnect(&url, BRIDGE_BINDING_NAME, noop_handler(), &[])
+            .await
+            .expect("bridge install should return a disconnect signal");
+    let reason = tokio::time::timeout(Duration::from_secs(1), disconnect)
+        .await
+        .expect("CDP close should be reported immediately")
+        .expect("disconnect sender should remain alive");
+
+    assert!(reason.contains("CDP websocket"), "{reason}");
+    request_rx
+        .await
+        .expect("server task should finish without panicking");
 }
 
 #[tokio::test]

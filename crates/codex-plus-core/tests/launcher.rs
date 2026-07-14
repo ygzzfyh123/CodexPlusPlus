@@ -23,6 +23,7 @@ use codex_plus_core::ports::{
 };
 use codex_plus_core::settings::{BackendSettings, RelayMode, RelayProfile, RelayProtocol};
 use codex_plus_core::status::StatusStore;
+use futures_util::StreamExt;
 
 #[test]
 fn app_paths_find_latest_windows_package_prefers_highest_version_app_dir() {
@@ -735,6 +736,41 @@ async fn default_helper_serves_backend_status_over_http() {
     assert!(!repair_response.status().is_success());
 
     hooks.shutdown_helper(port).await;
+}
+
+#[tokio::test]
+async fn default_helper_streams_backend_status_over_websocket_and_closes_on_shutdown() {
+    let hooks = DefaultLaunchHooks::default();
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    hooks.start_helper(port).await.unwrap();
+    let (mut socket, response) =
+        tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/backend/events"))
+            .await
+            .unwrap();
+    assert_eq!(response.status(), 101);
+    let message = socket.next().await.unwrap().unwrap();
+    let tokio_tungstenite::tungstenite::Message::Text(text) = message else {
+        panic!("backend status stream should start with a JSON text message");
+    };
+    let payload: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(payload["status"], "ok");
+    assert_eq!(payload["transport"], "websocket");
+
+    hooks.shutdown_helper(port).await;
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(1), socket.next())
+        .await
+        .expect("helper shutdown should close the backend status stream immediately");
+    assert!(!matches!(
+        closed,
+        Some(Ok(message))
+            if !matches!(
+                message,
+                tokio_tungstenite::tungstenite::Message::Close(_)
+            )
+    ));
 }
 
 #[tokio::test]

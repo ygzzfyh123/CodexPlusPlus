@@ -1,5 +1,7 @@
+use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use async_trait::async_trait;
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
@@ -216,6 +218,7 @@ pub trait LaunchHooks: Send + Sync {
 pub struct DefaultLaunchHooks {
     child: Mutex<Option<Child>>,
     helper: Mutex<Option<HelperRuntime>>,
+    bridge_disconnect: Mutex<Option<crate::bridge::BridgeDisconnect>>,
     bridge_watchdog: Mutex<Option<BridgeWatchdogRuntime>>,
     computer_use_guard_watchdog: Mutex<Option<ComputerUseGuardWatchdogRuntime>>,
     computer_use_guard_artifacts: Mutex<Option<crate::computer_use_guard::GuardArtifacts>>,
@@ -223,6 +226,7 @@ pub struct DefaultLaunchHooks {
 
 struct HelperRuntime {
     shutdown: tokio::sync::oneshot::Sender<()>,
+    connection_shutdown: tokio::sync::broadcast::Sender<()>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -235,6 +239,10 @@ struct ComputerUseGuardWatchdogRuntime {
     shutdown: tokio::sync::oneshot::Sender<()>,
     task: tokio::task::JoinHandle<()>,
 }
+
+pub type BridgeReconnectFuture =
+    Pin<Box<dyn Future<Output = anyhow::Result<crate::bridge::BridgeDisconnect>> + Send>>;
+pub type BridgeReconnectHandler = Arc<dyn Fn() -> BridgeReconnectFuture + Send + Sync + 'static>;
 
 pub async fn launch_and_inject(options: LaunchOptions) -> anyhow::Result<LaunchHandle> {
     launch_and_inject_with_hooks(options, DefaultLaunchHooks::shared()).await
@@ -490,6 +498,102 @@ impl DefaultLaunchHooks {
     pub fn shared() -> Arc<dyn LaunchHooks> {
         Arc::new(Self::default())
     }
+
+    pub async fn set_bridge_disconnect(&self, disconnect: crate::bridge::BridgeDisconnect) {
+        *self.bridge_disconnect.lock().await = Some(disconnect);
+    }
+
+    pub async fn start_bridge_connection_watchdog(
+        &self,
+        debug_port: u16,
+        helper_port: u16,
+        reconnect: BridgeReconnectHandler,
+    ) -> anyhow::Result<()> {
+        let mut disconnect = self
+            .bridge_disconnect
+            .lock()
+            .await
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("CDP bridge disconnect signal is unavailable"))?;
+        let (shutdown, mut shutdown_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            #[cfg(windows)]
+            let pet_cursor_task = tokio::spawn(run_pet_real_mouse_cursor_driver(debug_port));
+            'watchdog: loop {
+                let reason = tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    result = &mut disconnect => result.unwrap_or_else(|_| "CDP bridge monitor stopped".to_string()),
+                };
+                let _ = crate::diagnostic_log::append_diagnostic_log(
+                    "bridge.connection_disconnected",
+                    serde_json::json!({
+                        "debug_port": debug_port,
+                        "helper_port": helper_port,
+                        "message": reason
+                    }),
+                );
+
+                let mut retry_delay = std::time::Duration::ZERO;
+                loop {
+                    if !retry_delay.is_zero() {
+                        tokio::select! {
+                            _ = &mut shutdown_rx => break 'watchdog,
+                            _ = tokio::time::sleep(retry_delay) => {}
+                        }
+                    }
+                    let reconnect_result = tokio::select! {
+                        _ = &mut shutdown_rx => break 'watchdog,
+                        result = reconnect() => result,
+                    };
+                    match reconnect_result {
+                        Ok(next_disconnect) => {
+                            disconnect = next_disconnect;
+                            let _ = crate::diagnostic_log::append_diagnostic_log(
+                                "bridge.connection_reconnected",
+                                serde_json::json!({
+                                    "debug_port": debug_port,
+                                    "helper_port": helper_port
+                                }),
+                            );
+                            break;
+                        }
+                        Err(error) => {
+                            let _ = crate::diagnostic_log::append_diagnostic_log(
+                                "bridge.connection_reconnect_failed",
+                                serde_json::json!({
+                                    "debug_port": debug_port,
+                                    "helper_port": helper_port,
+                                    "message": error.to_string()
+                                }),
+                            );
+                            retry_delay = match retry_delay.as_millis() {
+                                0 => std::time::Duration::from_millis(250),
+                                1..=499 => std::time::Duration::from_millis(500),
+                                500..=999 => std::time::Duration::from_secs(1),
+                                1000..=1999 => std::time::Duration::from_secs(2),
+                                _ => std::time::Duration::from_secs(5),
+                            };
+                        }
+                    }
+                }
+            }
+            #[cfg(windows)]
+            {
+                pet_cursor_task.abort();
+                let _ = pet_cursor_task.await;
+            }
+        });
+        if let Some(runtime) = self
+            .bridge_watchdog
+            .lock()
+            .await
+            .replace(BridgeWatchdogRuntime { shutdown, task })
+        {
+            let _ = runtime.shutdown.send(());
+            let _ = runtime.task.await;
+        }
+        Ok(())
+    }
 }
 
 fn helper_bind_host() -> String {
@@ -648,24 +752,34 @@ impl LaunchHooks for DefaultLaunchHooks {
             }),
         );
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+        let (connection_shutdown, _) = tokio::sync::broadcast::channel(1);
+        let accepted_connection_shutdown = connection_shutdown.clone();
         let task = tokio::spawn(async move {
             loop {
                 tokio::select! {
                     _ = &mut shutdown_rx => break,
                     accepted = listener.accept() => {
                         if let Ok((stream, addr)) = accepted {
+                            let connection_shutdown = accepted_connection_shutdown.subscribe();
                             tokio::spawn(async move {
-                                let _ = handle_helper_connection(stream, Some(addr)).await;
+                                let _ = handle_helper_connection(stream, Some(addr), connection_shutdown).await;
                             });
                         }
                     }
                 }
             }
         });
-        *self.helper.lock().await = Some(HelperRuntime {
+        let runtime = HelperRuntime {
             shutdown: shutdown_tx,
+            connection_shutdown,
             task,
-        });
+        };
+        let previous = self.helper.lock().await.replace(runtime);
+        if let Some(previous) = previous {
+            let _ = previous.connection_shutdown.send(());
+            let _ = previous.shutdown.send(());
+            let _ = previous.task.await;
+        }
         Ok(())
     }
 
@@ -791,45 +905,21 @@ impl LaunchHooks for DefaultLaunchHooks {
     }
 
     async fn inject(&self, debug_port: u16, helper_port: u16) -> anyhow::Result<()> {
-        retry_injection(debug_port, helper_port).await
+        let disconnect = retry_injection(debug_port, helper_port).await?;
+        self.set_bridge_disconnect(disconnect).await;
+        Ok(())
     }
     async fn start_bridge_watchdog(&self, debug_port: u16, helper_port: u16) -> anyhow::Result<()> {
-        let (shutdown, mut shutdown_rx) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(async move {
-            #[cfg(windows)]
-            let pet_cursor_task = tokio::spawn(run_pet_real_mouse_cursor_driver(debug_port));
-            let mut interval = tokio::time::interval_at(
-                tokio::time::Instant::now() + std::time::Duration::from_secs(30),
-                std::time::Duration::from_secs(30),
-            );
-            loop {
-                tokio::select! {
-                    _ = &mut shutdown_rx => break,
-                    _ = interval.tick() => {
-                        let (pet_result, _) = tokio::join!(
-                            sync_pet_real_mouse_overlay(debug_port, helper_port),
-                            check_and_reinject_bridge(debug_port, helper_port),
-                        );
-                        record_pet_overlay_sync_result(debug_port, helper_port, pet_result);
-                    }
-                }
-            }
-            #[cfg(windows)]
-            {
-                pet_cursor_task.abort();
-                let _ = pet_cursor_task.await;
-            }
+        let reconnect: BridgeReconnectHandler = Arc::new(move || {
+            Box::pin(async move {
+                let disconnect = retry_injection(debug_port, helper_port).await?;
+                let pet_result = sync_pet_real_mouse_overlay(debug_port, helper_port).await;
+                record_pet_overlay_sync_result(debug_port, helper_port, pet_result);
+                Ok(disconnect)
+            })
         });
-        if let Some(runtime) = self
-            .bridge_watchdog
-            .lock()
+        self.start_bridge_connection_watchdog(debug_port, helper_port, reconnect)
             .await
-            .replace(BridgeWatchdogRuntime { shutdown, task })
-        {
-            let _ = runtime.shutdown.send(());
-            let _ = runtime.task.await;
-        }
-        Ok(())
     }
 
     async fn start_computer_use_guard_watchdog(
@@ -924,6 +1014,7 @@ impl LaunchHooks for DefaultLaunchHooks {
             let _ = runtime.task.await;
         }
         if let Some(runtime) = self.helper.lock().await.take() {
+            let _ = runtime.connection_shutdown.send(());
             let _ = runtime.shutdown.send(());
             let _ = runtime.task.await;
         }
@@ -967,6 +1058,7 @@ impl LaunchHooks for DefaultLaunchHooks {
 async fn handle_helper_connection(
     mut stream: tokio::net::TcpStream,
     remote_addr: Option<SocketAddr>,
+    mut connection_shutdown: tokio::sync::broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     let request_bytes = read_http_request(&mut stream).await?;
     let request = String::from_utf8_lossy(&request_bytes);
@@ -979,7 +1071,7 @@ async fn handle_helper_connection(
     let request_user_agent = header_value_from_request(&request, "user-agent");
     let remote_addr_text = remote_addr.map(|addr| addr.to_string());
 
-    let quiet_status_request = path == "/backend/status";
+    let quiet_status_request = matches!(path, "/backend/status" | "/backend/events");
     if !quiet_status_request {
         let _ = crate::diagnostic_log::append_diagnostic_log(
             "helper.request",
@@ -991,6 +1083,14 @@ async fn handle_helper_connection(
                 "body_bytes": request_body.len()
             }),
         );
+    }
+
+    if path == "/backend/events"
+        && method == "GET"
+        && header_value_from_request(&request, "upgrade")
+            .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+    {
+        return handle_backend_events_websocket(stream, &request, &mut connection_shutdown).await;
     }
 
     if crate::protocol_proxy::is_responses_proxy_path(path) && method == "POST" {
@@ -1031,12 +1131,7 @@ async fn handle_helper_connection(
     {
         (
             "200 OK".to_string(),
-            serde_json::to_vec(&serde_json::json!({
-                "status": "ok",
-                "message": "后端已连接",
-                "version": crate::version::VERSION,
-                "transport": "http-helper"
-            }))?,
+            serde_json::to_vec(&backend_status_payload("http-helper"))?,
             "application/json; charset=utf-8".to_string(),
             "helper.backend_status_ok",
         )
@@ -1114,6 +1209,77 @@ async fn handle_helper_connection(
         stream.write_all(&body).await?;
     }
     stream.shutdown().await?;
+    Ok(())
+}
+
+fn backend_status_payload(transport: &str) -> Value {
+    serde_json::json!({
+        "status": "ok",
+        "message": "后端已连接",
+        "version": crate::version::VERSION,
+        "transport": transport
+    })
+}
+
+async fn handle_backend_events_websocket(
+    mut stream: tokio::net::TcpStream,
+    request: &str,
+    connection_shutdown: &mut tokio::sync::broadcast::Receiver<()>,
+) -> anyhow::Result<()> {
+    let key = header_value_from_request(request, "sec-websocket-key")
+        .ok_or_else(|| anyhow::anyhow!("WebSocket upgrade is missing Sec-WebSocket-Key"))?;
+    let version = header_value_from_request(request, "sec-websocket-version")
+        .unwrap_or_else(|| "13".to_string());
+    if version != "13" {
+        anyhow::bail!("unsupported WebSocket version {version}");
+    }
+    let accept_key = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+    let response = format!(
+        "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: {accept_key}\r\n\r\n"
+    );
+    stream.write_all(response.as_bytes()).await?;
+
+    let mut websocket = tokio_tungstenite::WebSocketStream::from_raw_socket(
+        stream,
+        tokio_tungstenite::tungstenite::protocol::Role::Server,
+        None,
+    )
+    .await;
+    websocket
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            backend_status_payload("websocket").to_string().into(),
+        ))
+        .await?;
+    loop {
+        let message = tokio::select! {
+            _ = connection_shutdown.recv() => {
+                let _ = websocket.close(None).await;
+                break;
+            }
+            message = websocket.next() => message,
+        };
+        let Some(message) = message else {
+            break;
+        };
+        match message? {
+            tokio_tungstenite::tungstenite::Message::Text(text)
+                if text.eq_ignore_ascii_case("status") =>
+            {
+                websocket
+                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                        backend_status_payload("websocket").to_string().into(),
+                    ))
+                    .await?;
+            }
+            tokio_tungstenite::tungstenite::Message::Ping(payload) => {
+                websocket
+                    .send(tokio_tungstenite::tungstenite::Message::Pong(payload))
+                    .await?;
+            }
+            tokio_tungstenite::tungstenite::Message::Close(_) => break,
+            _ => {}
+        }
+    }
     Ok(())
 }
 
@@ -1861,11 +2027,14 @@ pub fn build_packaged_activation_with_native_menu_inspector(
     })
 }
 
-async fn retry_injection(debug_port: u16, helper_port: u16) -> anyhow::Result<()> {
+async fn retry_injection(
+    debug_port: u16,
+    helper_port: u16,
+) -> anyhow::Result<crate::bridge::BridgeDisconnect> {
     let mut last_error = None;
     for _ in 0..20 {
         match try_inject(debug_port, helper_port).await {
-            Ok(()) => return Ok(()),
+            Ok(disconnect) => return Ok(disconnect),
             Err(error) => {
                 last_error = Some(error);
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -1873,73 +2042,6 @@ async fn retry_injection(debug_port: u16, helper_port: u16) -> anyhow::Result<()
         }
     }
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Codex injection failed")))
-}
-
-pub async fn check_and_reinject_bridge(debug_port: u16, helper_port: u16) -> bool {
-    let healthy = match bridge_health_ok(debug_port).await {
-        Ok(healthy) => healthy,
-        Err(error) => {
-            let _ = crate::diagnostic_log::append_diagnostic_log(
-                "bridge.health_check_failed",
-                serde_json::json!({
-                    "debug_port": debug_port,
-                    "helper_port": helper_port,
-                    "message": error.to_string()
-                }),
-            );
-            false
-        }
-    };
-    if healthy {
-        return false;
-    }
-
-    let _ = crate::diagnostic_log::append_diagnostic_log(
-        "bridge.reinject_start",
-        serde_json::json!({
-            "debug_port": debug_port,
-            "helper_port": helper_port
-        }),
-    );
-    match retry_injection(debug_port, helper_port).await {
-        Ok(()) => {
-            let _ = crate::diagnostic_log::append_diagnostic_log(
-                "bridge.reinject_ok",
-                serde_json::json!({
-                    "debug_port": debug_port,
-                    "helper_port": helper_port
-                }),
-            );
-            true
-        }
-        Err(error) => {
-            let _ = crate::diagnostic_log::append_diagnostic_log(
-                "bridge.reinject_failed",
-                serde_json::json!({
-                    "debug_port": debug_port,
-                    "helper_port": helper_port,
-                    "message": error.to_string()
-                }),
-            );
-            false
-        }
-    }
-}
-
-async fn bridge_health_ok(debug_port: u16) -> anyhow::Result<bool> {
-    let targets = crate::cdp::list_targets(debug_port).await?;
-    let target = crate::cdp::pick_injectable_codex_page_target(&targets)?;
-    let websocket_url = target
-        .web_socket_debugger_url
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("selected CDP target has no websocket URL"))?;
-    let result = crate::bridge::evaluate_script_with_await_promise(
-        websocket_url,
-        crate::bridge::bridge_health_check_script(),
-        true,
-    )
-    .await?;
-    Ok(runtime_evaluate_result_is_true(&result))
 }
 
 fn runtime_evaluate_result_is_true(result: &Value) -> bool {
@@ -1951,7 +2053,10 @@ fn runtime_evaluate_result_is_true(result: &Value) -> bool {
         .unwrap_or(false)
 }
 
-async fn try_inject(debug_port: u16, helper_port: u16) -> anyhow::Result<()> {
+async fn try_inject(
+    debug_port: u16,
+    helper_port: u16,
+) -> anyhow::Result<crate::bridge::BridgeDisconnect> {
     let targets = crate::cdp::list_targets(debug_port).await?;
     let target = crate::cdp::pick_injectable_codex_page_target(&targets)?;
     let websocket_url = target
@@ -1964,7 +2069,7 @@ async fn try_inject(debug_port: u16, helper_port: u16) -> anyhow::Result<()> {
         debug_port,
         StatusStore::default(),
     )));
-    crate::bridge::install_bridge(
+    crate::bridge::install_bridge_with_disconnect(
         websocket_url,
         crate::bridge::BRIDGE_BINDING_NAME,
         Arc::new(move |path, payload| {

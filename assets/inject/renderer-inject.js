@@ -2263,7 +2263,6 @@
 
   let codexPlusUserScripts = { enabled: true, builtin_dir: "", user_dir: "", scripts: [] };
   let codexPlusBackendStatus = { status: "checking", message: "正在检查后端…" };
-  let codexPlusBackendCheckSeq = 0;
 
   function setCodexPlusTriggerLabel(trigger) {
     if (!trigger) return;
@@ -2309,26 +2308,70 @@
     refreshCodexServiceTierControls();
   }
 
-  function withBackendTimeout(request) {
-    return Promise.race([
-      request,
-      new Promise((resolve) => setTimeout(() => resolve({ status: "failed", message: "后端检查超时", timeout: true }), 2000)),
-    ]);
+  function backendEventsUrl() {
+    const url = new URL(helperBase);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = "/backend/events";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
   }
 
-  async function checkBackendStatus() {
-    const seq = ++codexPlusBackendCheckSeq;
-    const nextStatus = await withBackendTimeout(postJson("/backend/status", {}));
-    if (seq !== codexPlusBackendCheckSeq) return;
-    codexPlusBackendStatus = nextStatus;
-    if (nextStatus?.status !== "ok") {
-      sendCodexPlusDiagnostic("backend_check_failed", {
-        status: nextStatus?.status || "unknown",
-        message: nextStatus?.message || "",
-        timeout: !!nextStatus?.timeout,
-      });
-    }
+  function markBackendDisconnected(message = "后端连接已断开") {
+    codexPlusBackendStatus = { status: "failed", message };
     renderBackendStatus();
+  }
+
+  function scheduleBackendReconnect() {
+    if (window.__codexPlusBackendReconnectTimer) return;
+    const attempt = Number(window.__codexPlusBackendReconnectAttempt || 0);
+    const delay = Math.min(5000, 250 * (2 ** Math.min(attempt, 5)));
+    window.__codexPlusBackendReconnectAttempt = attempt + 1;
+    window.__codexPlusBackendReconnectTimer = window.setTimeout(() => {
+      window.__codexPlusBackendReconnectTimer = 0;
+      connectBackendStatusStream();
+    }, delay);
+  }
+
+  function connectBackendStatusStream() {
+    const current = window.__codexPlusBackendSocket;
+    if (current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) return;
+    codexPlusBackendStatus = { status: "checking", message: "正在连接后端" };
+    renderBackendStatus();
+    let socket;
+    try {
+      socket = new WebSocket(backendEventsUrl());
+    } catch (error) {
+      markBackendDisconnected(error?.message || "后端长连接创建失败");
+      scheduleBackendReconnect();
+      return;
+    }
+    window.__codexPlusBackendSocket = socket;
+    socket.addEventListener("open", () => {
+      if (window.__codexPlusBackendSocket !== socket) return;
+      window.__codexPlusBackendReconnectAttempt = 0;
+    });
+    socket.addEventListener("message", (event) => {
+      if (window.__codexPlusBackendSocket !== socket) return;
+      try {
+        const nextStatus = JSON.parse(String(event.data || ""));
+        if (nextStatus?.status) {
+          codexPlusBackendStatus = nextStatus;
+          renderBackendStatus();
+        }
+      } catch {
+      }
+    });
+    socket.addEventListener("close", () => {
+      if (window.__codexPlusBackendSocket !== socket) return;
+      window.__codexPlusBackendSocket = null;
+      markBackendDisconnected();
+      scheduleBackendReconnect();
+    });
+    socket.addEventListener("error", () => {
+      if (window.__codexPlusBackendSocket !== socket) return;
+      markBackendDisconnected("后端长连接异常");
+    });
   }
 
   async function openManagerFromCodex() {
@@ -2340,12 +2383,20 @@
     }
   }
 
-  function scheduleBackendHeartbeat() {
-    if (window.__codexPlusBackendHeartbeat) return;
-    window.__codexPlusBackendHeartbeat = setInterval(() => {
-      if (document.visibilityState === "visible") checkBackendStatus();
-    }, 30000);
-    checkBackendStatus();
+  function startBackendStatusStream() {
+    if (window.__codexPlusBackendStatusStreamInstalled) return;
+    window.__codexPlusBackendStatusStreamInstalled = true;
+    connectBackendStatusStream();
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") connectBackendStatusStream();
+    });
+    window.addEventListener("pagehide", () => {
+      window.clearTimeout(window.__codexPlusBackendReconnectTimer);
+      window.__codexPlusBackendReconnectTimer = 0;
+      const socket = window.__codexPlusBackendSocket;
+      window.__codexPlusBackendSocket = null;
+      if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
+    }, { once: true });
   }
 
   function userScriptStatusLabel(status) {
@@ -8211,7 +8262,7 @@
     installCodexServiceTierDispatcherPatch();
     installCodexPlusMenu();
     localizeCodexMenus();
-    scheduleBackendHeartbeat();
+    startBackendStatusStream();
     installDeleteButtonEventDelegation();
     updateThreadScrollHandlers();
     installThreadScrollProgrammaticScrollGuard();

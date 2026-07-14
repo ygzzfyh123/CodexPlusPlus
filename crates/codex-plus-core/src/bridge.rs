@@ -21,6 +21,7 @@ pub type BridgeHandler = Arc<
         + Send
         + Sync,
 >;
+pub type BridgeDisconnect = tokio::sync::oneshot::Receiver<String>;
 
 static NEXT_MESSAGE_ID: AtomicU64 = AtomicU64::new(100);
 
@@ -50,23 +51,6 @@ pub fn build_bridge_script(binding_name: &str) -> String {
 }})();
 "#
     )
-}
-
-pub fn bridge_health_check_script() -> &'static str {
-    r#"
-(() => {
-  const bridge = window.__codexSessionDeleteBridge;
-  if (typeof bridge !== "function") return false;
-  try {
-    return Promise.race([
-      Promise.resolve(bridge("/backend/status", {})).then((result) => !!result && result.status === "ok"),
-      new Promise((resolve) => setTimeout(() => resolve(false), 2000)),
-    ]);
-  } catch (error) {
-    return false;
-  }
-})()
-"#
 }
 
 pub async fn evaluate_script(websocket_url: &str, script: &str) -> anyhow::Result<Value> {
@@ -141,6 +125,18 @@ pub async fn install_bridge(
     handler: BridgeHandler,
     new_document_scripts: &[String],
 ) -> anyhow::Result<()> {
+    let _disconnect =
+        install_bridge_with_disconnect(websocket_url, binding_name, handler, new_document_scripts)
+            .await?;
+    Ok(())
+}
+
+pub async fn install_bridge_with_disconnect(
+    websocket_url: &str,
+    binding_name: &str,
+    handler: BridgeHandler,
+    new_document_scripts: &[String],
+) -> anyhow::Result<BridgeDisconnect> {
     let socket = connect_cdp_websocket(websocket_url).await?;
     let mut session = CdpSession::new(socket).with_handler(handler);
 
@@ -188,19 +184,22 @@ pub async fn install_bridge(
     }
 
     session.drain_binding_queue().await?;
+    let (disconnect_tx, disconnect_rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
-        loop {
-            if session.drain_binding_queue().await.is_err() {
-                break;
+        let reason = loop {
+            if let Err(error) = session.drain_binding_queue().await {
+                break format!("failed to drain CDP bridge queue: {error:#}");
             }
             match session.next_message().await {
                 Ok(Some(_)) => {}
-                Ok(None) | Err(_) => break,
+                Ok(None) => break "CDP websocket closed".to_string(),
+                Err(error) => break format!("CDP websocket read failed: {error:#}"),
             }
-        }
+        };
+        let _ = disconnect_tx.send(reason);
     });
 
-    Ok(())
+    Ok(disconnect_rx)
 }
 
 pub fn runtime_evaluate_params(script: &str) -> Value {
@@ -355,8 +354,17 @@ where
             return Ok(None);
         };
         let message = message.context("failed to read CDP websocket message")?;
-        let Message::Text(text) = message else {
-            return Ok(Some(json!({})));
+        let text = match message {
+            Message::Text(text) => text,
+            Message::Ping(payload) => {
+                self.socket
+                    .send(Message::Pong(payload))
+                    .await
+                    .context("failed to answer CDP websocket ping")?;
+                return Ok(Some(json!({})));
+            }
+            Message::Close(_) => return Ok(None),
+            _ => return Ok(Some(json!({}))),
         };
         let value: Value = serde_json::from_str(&text).context("failed to parse CDP message")?;
 
