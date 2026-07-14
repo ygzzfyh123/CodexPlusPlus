@@ -2317,6 +2317,31 @@
     return url.toString();
   }
 
+  function backendWebSocketAllowedByDocumentCsp() {
+    const policies = Array.from(document.querySelectorAll('meta[http-equiv="Content-Security-Policy"]'))
+      .map((node) => String(node.content || "").trim())
+      .filter(Boolean);
+    if (!policies.length) return true;
+    const endpoint = new URL(backendEventsUrl());
+    return policies.every((policy) => {
+      const directives = new Map(
+        policy.split(";")
+          .map((directive) => directive.trim().split(/\s+/).filter(Boolean))
+          .filter((parts) => parts.length)
+          .map((parts) => [parts[0].toLowerCase(), parts.slice(1)]),
+      );
+      const sources = directives.get("connect-src") || directives.get("default-src");
+      if (!sources) return true;
+      return sources.some((source) => {
+        const normalized = source.replace(/\/+$/, "");
+        return normalized === "*" ||
+          normalized === "ws:" ||
+          normalized === endpoint.origin ||
+          normalized === `${endpoint.protocol}//${endpoint.hostname}:*`;
+      });
+    });
+  }
+
   function markBackendDisconnected(message = "后端连接已断开") {
     codexPlusBackendStatus = { status: "failed", message };
     renderBackendStatus();
@@ -2333,17 +2358,47 @@
     }, delay);
   }
 
+  async function connectBackendStatusViaBridge() {
+    if (window.__codexPlusBackendBridgeStatusPromise) {
+      return window.__codexPlusBackendBridgeStatusPromise;
+    }
+    const request = (async () => {
+      codexPlusBackendStatus = { status: "checking", message: "正在连接后端" };
+      renderBackendStatus();
+      const nextStatus = await postJson("/backend/status", {});
+      if (nextStatus?.status === "ok") {
+        window.__codexPlusBackendReconnectAttempt = 0;
+        codexPlusBackendStatus = {
+          ...nextStatus,
+          transport: nextStatus.transport || "cdp-bridge",
+        };
+        renderBackendStatus();
+        return true;
+      }
+      markBackendDisconnected(nextStatus?.message || "后端连接已断开");
+      scheduleBackendReconnect();
+      return false;
+    })().finally(() => {
+      window.__codexPlusBackendBridgeStatusPromise = null;
+    });
+    window.__codexPlusBackendBridgeStatusPromise = request;
+    return request;
+  }
+
   function connectBackendStatusStream() {
     const current = window.__codexPlusBackendSocket;
     if (current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) return;
+    if (!backendWebSocketAllowedByDocumentCsp()) {
+      void connectBackendStatusViaBridge();
+      return;
+    }
     codexPlusBackendStatus = { status: "checking", message: "正在连接后端" };
     renderBackendStatus();
     let socket;
     try {
       socket = new WebSocket(backendEventsUrl());
     } catch (error) {
-      markBackendDisconnected(error?.message || "后端长连接创建失败");
-      scheduleBackendReconnect();
+      void connectBackendStatusViaBridge();
       return;
     }
     window.__codexPlusBackendSocket = socket;
@@ -2365,12 +2420,16 @@
     socket.addEventListener("close", () => {
       if (window.__codexPlusBackendSocket !== socket) return;
       window.__codexPlusBackendSocket = null;
-      markBackendDisconnected();
-      scheduleBackendReconnect();
+      void connectBackendStatusViaBridge();
     });
     socket.addEventListener("error", () => {
       if (window.__codexPlusBackendSocket !== socket) return;
-      markBackendDisconnected("后端长连接异常");
+      try {
+        socket.close();
+      } catch {
+        window.__codexPlusBackendSocket = null;
+        void connectBackendStatusViaBridge();
+      }
     });
   }
 

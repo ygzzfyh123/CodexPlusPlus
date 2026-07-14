@@ -1093,6 +1093,9 @@ fn injection_script_uses_backend_websocket_instead_of_periodic_heartbeat() {
     assert!(script.contains("/backend/events"));
     assert!(script.contains("new WebSocket"));
     assert!(script.contains("connectBackendStatusStream"));
+    assert!(script.contains("backendWebSocketAllowedByDocumentCsp"));
+    assert!(script.contains("connectBackendStatusViaBridge"));
+    assert!(script.contains("transport: nextStatus.transport || \"cdp-bridge\""));
     assert!(!script.contains("__codexPlusBackendHeartbeat"));
     assert!(!script.contains("scheduleBackendHeartbeat"));
 }
