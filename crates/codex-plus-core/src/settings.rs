@@ -103,6 +103,18 @@ pub struct RelayProfile {
         skip_serializing_if = "String::is_empty"
     )]
     pub model_windows: String,
+    #[serde(rename = "modelVlm", default, skip_serializing_if = "String::is_empty")]
+    pub model_vlm: String,
+    #[serde(
+        rename = "vlmApiKey",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub vlm_api_key: String,
+    #[serde(rename = "vlmModel", default)]
+    pub vlm_model: String,
+    #[serde(rename = "vlmBaseUrl", default)]
+    pub vlm_base_url: String,
     #[serde(
         rename = "userAgent",
         default,
@@ -178,6 +190,10 @@ impl Default for RelayProfile {
             model_insert_mode: RelayModelInsertMode::Patch,
             model_list: String::new(),
             model_windows: String::new(),
+            model_vlm: String::new(),
+            vlm_api_key: String::new(),
+            vlm_model: String::new(),
+            vlm_base_url: String::new(),
             user_agent: String::new(),
             custom_models: Vec::new(),
             default_custom_model_id: String::new(),
@@ -527,6 +543,10 @@ impl BackendSettings {
                 model_insert_mode: RelayModelInsertMode::Patch,
                 model_list: String::new(),
                 model_windows: String::new(),
+                model_vlm: String::new(),
+                vlm_api_key: String::new(),
+                vlm_model: String::new(),
+                vlm_base_url: String::new(),
                 user_agent: String::new(),
                 custom_models: Vec::new(),
                 default_custom_model_id: String::new(),
@@ -576,6 +596,10 @@ impl BackendSettings {
             model_insert_mode: RelayModelInsertMode::Patch,
             model_list: String::new(),
             model_windows: String::new(),
+            model_vlm: String::new(),
+            vlm_api_key: String::new(),
+            vlm_model: String::new(),
+            vlm_base_url: String::new(),
             user_agent: String::new(),
             custom_models: Vec::new(),
             default_custom_model_id: String::new(),

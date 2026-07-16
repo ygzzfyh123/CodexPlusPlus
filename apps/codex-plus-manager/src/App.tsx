@@ -74,6 +74,7 @@ import {
   mergeModelWindowRows,
   modelWindowRowsFromProfile,
   serializeModelWindowRows,
+  type ImageHandling,
   type ModelWindowRow,
 } from "./model-windows";
 import { resolveProviderSyncCompletion } from "./provider-sync-flow";
@@ -230,6 +231,10 @@ export type RelayProfile = {
   autoCompactPercent: number;
   modelList: string;
   modelWindows: string;
+  modelVlm: string;
+  vlmApiKey: string;
+  vlmModel: string;
+  vlmBaseUrl: string;
   userAgent: string;
   customModels: CustomRelayModel[];
   defaultCustomModelId: string;
@@ -886,6 +891,10 @@ const defaultSettings: BackendSettings = {
       autoCompactPercent: 80,
       modelList: "",
       modelWindows: "",
+      modelVlm: "",
+      vlmApiKey: "",
+      vlmModel: "",
+      vlmBaseUrl: "",
       userAgent: "",
       customModels: [],
       defaultCustomModelId: "",
@@ -4999,7 +5008,7 @@ function RelayProfileDetail({
 }) {
   const [draft, setDraft] = useState<RelayProfile>(profile);
   const [modelWindowRows, setModelWindowRows] = useState<ModelWindowRow[]>(
-    modelWindowRowsFromProfile(profile.modelList, profile.modelWindows || ""),
+    modelWindowRowsFromProfile(profile.modelList, profile.modelWindows || "", profile.modelVlm),
   );
   const isActive = !isNew && profile.id === form.activeRelayId;
   const profileUsesLiveFiles = relayProfileUsesLiveFiles(profile);
@@ -5016,12 +5025,12 @@ function RelayProfileDetail({
             : profile,
         );
     setDraft(nextDraft);
-    setModelWindowRows(modelWindowRowsFromProfile(nextDraft.modelList, nextDraft.modelWindows || ""));
+    setModelWindowRows(modelWindowRowsFromProfile(nextDraft.modelList, nextDraft.modelWindows || "", nextDraft.modelVlm));
   }, [profile.id, profile.modelList, profile.modelWindows, profileUsesLiveFiles, isActive, isNew, relayFiles?.configContents, relayFiles?.authContents]);
   const validationError = isAggregateRelayProfile(draft) ? aggregateRelayProfileValidation(draft) : null;
   const draftWithModelRows = () => {
     const serializedRows = serializeModelWindowRows(modelWindowRows);
-    return { ...draft, modelList: serializedRows.modelList, modelWindows: serializedRows.modelWindows };
+    return { ...draft, modelList: serializedRows.modelList, modelWindows: serializedRows.modelWindows, modelVlm: serializedRows.modelVlm };
   };
   const saveDraft = async () => {
     if (validationError) return;
@@ -5136,6 +5145,8 @@ function RelayProfileEditor({
   const [doctorResult, setDoctorResult] = useState<ProviderDoctorResult | null>(null);
   const [doctorOpen, setDoctorOpen] = useState(false);
   const [doctorRunning, setDoctorRunning] = useState(false);
+  // 纯 Responses 模式（非聚合）下 VLM/Strip 不生效，禁用下拉
+  const vlmUnsupportedProtocol = profile.protocol === "responses" && !isAggregateRelayProfile(profile);
   if (isAggregateRelayProfile(profile)) {
     return (
       <AggregateRelayProfileEditor
@@ -5179,7 +5190,7 @@ function RelayProfileEditor({
   };
   const removeModelWindowRow = (index: number) => {
     const nextRows = modelWindowRows.filter((_, rowIndex) => rowIndex !== index);
-    setModelWindowRows(nextRows.length ? nextRows : [{ model: "", window: "" }]);
+    setModelWindowRows(nextRows.length ? nextRows : [{ model: "", window: "", imageHandling: "" }]);
   };
   const addModelWindowRows = (rows: ModelWindowRow[]) => {
     setModelWindowRows(mergeModelWindowRows(modelWindowRows, rows));
@@ -5396,36 +5407,52 @@ function RelayProfileEditor({
               <div className="relay-model-row relay-model-row-head">
                 <span>{t("模型名称")}</span>
                 <span>{t("上下文窗口")}</span>
-                <span />
               </div>
               {modelWindowRows.map((row, index) => (
-                <div className="relay-model-row" key={index}>
-                  <Input
-                    value={row.model}
-                    onChange={(event) => updateModelWindowRow(index, { model: event.currentTarget.value })}
-                    placeholder="deepseek/deepseek-v4-flash"
-                  />
-                  <Input
-                    value={row.window}
-                    onChange={(event) => updateModelWindowRow(index, { window: event.currentTarget.value })}
-                    placeholder="1M"
-                  />
-                  <Button
-                    aria-label={t("删除模型")}
-                    onClick={() => removeModelWindowRow(index)}
-                    size="icon"
-                    title={t("删除模型")}
-                    type="button"
-                    variant="ghost"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                <div key={index}>
+                  <div className="relay-model-row">
+                    <Input
+                      value={row.model}
+                      onChange={(event) => updateModelWindowRow(index, { model: event.currentTarget.value })}
+                      placeholder="deepseek/deepseek-v4-flash"
+                    />
+                    <Input
+                      value={row.window}
+                      onChange={(event) => updateModelWindowRow(index, { window: event.currentTarget.value })}
+                      placeholder="1M"
+                    />
+                    <Button
+                      aria-label={t("删除模型")}
+                      onClick={() => removeModelWindowRow(index)}
+                      size="icon"
+                      title={t("删除模型")}
+                      type="button"
+                      variant="ghost"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="relay-model-row-actions">
+                    <select
+                      className="field-select text-xs"
+                      value={row.imageHandling}
+                      disabled={vlmUnsupportedProtocol}
+                      onChange={(e) => updateModelWindowRow(index, { imageHandling: e.currentTarget.value as ImageHandling })}
+                      title={vlmUnsupportedProtocol ? t("VLM 仅支持 Chat Completions 协议和聚合模式") : ""}
+                    >
+                      <option value="" disabled>{t("纯文本模型请配置此项")}</option>
+                      <option value="send-as-is" title={t("原样发送图片")}>send-as-is</option>
+                      <option value="strip" title={t("为纯文本模型移除消息中的图片")}>strip images</option>
+                      <option value="vlm" title={t("为纯文本模型配置图片分析路由")}>VLM analysis</option>
+                    </select>
+                    <span className="relay-model-row-hint">{t("多模态模型（支持图片输入的模型）请保持 send-as-is。")}</span>
+                  </div>
                 </div>
               ))}
             </div>
             <div className="relay-model-list-tools">
               <Button
-                onClick={() => setModelWindowRows([...modelWindowRows, { model: "", window: "" }])}
+                onClick={() => setModelWindowRows([...modelWindowRows, { model: "", window: "", imageHandling: "" }])}
                 size="sm"
                 type="button"
                 variant="secondary"
@@ -5442,7 +5469,7 @@ function RelayProfileEditor({
                     modelWindows: serializedRows.modelWindows,
                   });
                   if (models?.length) {
-                    addModelWindowRows(models.map((model) => ({ model, window: "" })));
+                    addModelWindowRows(models.map((model) => ({ model, window: "", imageHandling: "" })));
                   }
                 }}
                 size="sm"
@@ -5457,6 +5484,41 @@ function RelayProfileEditor({
               {t("每行一个模型；上下文窗口可填")} <code>1M</code>{t("、")}<code>200K</code> {t("或")} <code>1000000</code>{t("，留空表示使用 Codex 默认长度。")}
             </p>
           </Field>
+        ) : null}
+        {showApiFields && modelWindowRows.some((row) => row.imageHandling === "vlm") ? (
+          <div className="relay-vlm-section">
+            <div className="relay-vlm-section-header">{t("Vision Analysis Provider")}</div>
+            <Field className="relay-field-vlm-api-key" label={t("VLM API Key")}>
+              <Input
+                type="password"
+                value={profile.vlmApiKey}
+                onChange={(event) => updateDraft({ vlmApiKey: event.currentTarget.value })}
+                placeholder="sk-..."
+              />
+            </Field>
+            <Field className="relay-field-vlm-model" label={t("VLM Model")}>
+              <Input
+                value={profile.vlmModel}
+                onChange={(event) => updateDraft({ vlmModel: event.currentTarget.value })}
+                placeholder="qwen-vl-plus"
+              />
+            </Field>
+            <Field className="relay-field-vlm-base-url" label={t("VLM Base URL")}>
+              <Input
+                value={profile.vlmBaseUrl}
+                onChange={(event) => updateDraft({ vlmBaseUrl: event.currentTarget.value })}
+                placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+              />
+            </Field>
+            <p className="field-hint">
+              {t("若开启 VLM analysis，请确认 VLM 配置项完整且服务可用。")}
+              <br />
+              {t("仅在 Chat Completion 和聚合模式生效。")}
+            </p>
+            {modelWindowRows.some((row) => row.imageHandling === "vlm") && (!profile.vlmApiKey || !profile.vlmModel || !profile.vlmBaseUrl) ? (
+              <p className="field-hint warn">{t("VLM 配置不完整：API Key、Model 和 Base URL 为必填项，否则 VLM 不会生效。")}</p>
+            ) : null}
+          </div>
         ) : null}
         {showApiFields ? (
           <Field className="relay-field-user-agent" label="User-Agent">
@@ -7416,6 +7478,10 @@ function normalizeSettings(settings: BackendSettings): BackendSettings {
             autoCompactPercent: 80,
             modelList: "",
             modelWindows: "",
+            modelVlm: "",
+            vlmApiKey: "",
+            vlmModel: "",
+            vlmBaseUrl: "",
             userAgent: "",
             customModels: [],
             defaultCustomModelId: "",
@@ -8220,6 +8286,10 @@ function createRelayProfile(settings: BackendSettings): RelayProfile {
     autoCompactPercent: 80,
     modelList: "",
     modelWindows: "",
+    modelVlm: "",
+    vlmApiKey: "",
+    vlmModel: "",
+    vlmBaseUrl: "",
     userAgent: "",
     customModels: [],
     defaultCustomModelId: "",
@@ -8254,6 +8324,10 @@ function createAggregateRelayProfile(settings: BackendSettings): RelayProfile {
       autoCompactPercent: 80,
       modelList: "",
       modelWindows: "",
+      modelVlm: "",
+      vlmApiKey: "",
+      vlmModel: "",
+      vlmBaseUrl: "",
       userAgent: "",
       customModels: [],
       defaultCustomModelId: "",
@@ -8455,6 +8529,10 @@ function createCustomModelsRelayProfile(settings: BackendSettings): RelayProfile
     autoCompactPercent: 80,
     modelList: "",
     modelWindows: "",
+    modelVlm: "",
+    vlmApiKey: "",
+    vlmModel: "",
+    vlmBaseUrl: "",
     userAgent: "",
     customModels: [model],
     defaultCustomModelId: model.id,

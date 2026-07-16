@@ -1472,7 +1472,7 @@ async fn open_responses_proxy_request_with_settings_and_user_agent(
     for (attempt, relay) in relays.into_iter().enumerate() {
         validate_upstream(&relay)?;
         let (endpoint, upstream_body, wire_api) =
-            upstream_request_parts(&relay, request_json.clone())?;
+            upstream_request_parts(&relay, request_json.clone()).await?;
         let has_more_candidates = attempt + 1 < relay_count;
         let header_timeout = response_header_timeout(is_stream);
         let _ = crate::diagnostic_log::append_diagnostic_log(
@@ -1699,6 +1699,14 @@ pub async fn open_audio_transcriptions_proxy_request(
     })
 }
 
+fn response_header_timeout(is_stream: bool) -> Duration {
+    if is_stream {
+        UPSTREAM_STREAM_HEADER_TIMEOUT
+    } else {
+        UPSTREAM_HEADER_TIMEOUT
+    }
+}
+
 pub async fn open_chat_completions_proxy_request(
     body: &str,
     original_user_agent: Option<&str>,
@@ -1747,53 +1755,111 @@ pub async fn open_chat_completions_proxy_request(
     })
 }
 
-fn response_header_timeout(is_stream: bool) -> Duration {
-    if is_stream {
-        UPSTREAM_STREAM_HEADER_TIMEOUT
-    } else {
-        UPSTREAM_HEADER_TIMEOUT
-    }
-}
-
-fn upstream_request_parts(
+async fn upstream_request_parts(
     relay: &crate::settings::RelayProfile,
     request_json: Value,
 ) -> anyhow::Result<(String, Value, UpstreamWireApi)> {
     match relay.protocol {
-        RelayProtocol::Responses => Ok((
-            responses_url(&relay.base_url),
-            request_json,
-            UpstreamWireApi::Responses,
-        )),
-        RelayProtocol::ChatCompletions => Ok((
-            chat_completions_url(&relay.base_url),
-            responses_to_chat_completions(request_json)?,
-            UpstreamWireApi::ChatCompletions,
-        )),
-        RelayProtocol::Completions => Ok((
-            completions_url(&relay.base_url),
-            responses_to_completions(request_json)?,
-            UpstreamWireApi::Completions,
-        )),
-        RelayProtocol::AnthropicMessages => Ok((
-            anthropic_messages_url(&relay.base_url),
-            responses_to_anthropic_messages(request_json)?,
-            UpstreamWireApi::AnthropicMessages,
-        )),
+        RelayProtocol::Responses => {
+            let mut body = request_json;
+            apply_relay_image_handling(relay, &mut body).await;
+            Ok((
+                responses_url(&relay.base_url),
+                body,
+                UpstreamWireApi::Responses,
+            ))
+        }
+        RelayProtocol::ChatCompletions => {
+            let mut body = responses_to_chat_completions(request_json)?;
+            apply_relay_image_handling(relay, &mut body).await;
+            Ok((
+                chat_completions_url(&relay.base_url),
+                body,
+                UpstreamWireApi::ChatCompletions,
+            ))
+        }
+        RelayProtocol::Completions => {
+            let mut source = request_json;
+            apply_relay_image_handling(relay, &mut source).await;
+            Ok((
+                completions_url(&relay.base_url),
+                responses_to_completions(source)?,
+                UpstreamWireApi::Completions,
+            ))
+        }
+        RelayProtocol::AnthropicMessages => {
+            let mut source = request_json;
+            apply_relay_image_handling(relay, &mut source).await;
+            Ok((
+                anthropic_messages_url(&relay.base_url),
+                responses_to_anthropic_messages(source)?,
+                UpstreamWireApi::AnthropicMessages,
+            ))
+        }
         RelayProtocol::GeminiGenerateContent => {
             let model = request_json
                 .get("model")
                 .and_then(Value::as_str)
-                .unwrap_or(&relay.model);
+                .unwrap_or(&relay.model)
+                .to_string();
             let is_stream = request_json
                 .get("stream")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let mut source = request_json;
+            apply_relay_image_handling(relay, &mut source).await;
             Ok((
-                gemini_generate_content_url(&relay.base_url, model, is_stream),
-                responses_to_gemini_generate_content(request_json)?,
+                gemini_generate_content_url(&relay.base_url, &model, is_stream),
+                responses_to_gemini_generate_content(source)?,
                 UpstreamWireApi::GeminiGenerateContent,
             ))
+        }
+    }
+}
+
+async fn apply_relay_image_handling(relay: &crate::settings::RelayProfile, body: &mut Value) {
+    // Image handling (per-model): send-as-is / strip / VLM analysis
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if !model.is_empty() {
+        use crate::vision::ImageHandling;
+        match crate::vision::image_handling_mode(&model, &relay.model_vlm) {
+            ImageHandling::SendAsIs => { /* 不做任何处理 */ }
+            ImageHandling::Strip => {
+                for key in &["messages", "input"] {
+                    if let Some(arr) = body.get_mut(key).and_then(Value::as_array_mut) {
+                        crate::vision::strip_images_only(arr);
+                    }
+                }
+            }
+            ImageHandling::Vlm => {
+                if !relay.vlm_api_key.is_empty()
+                    && !relay.vlm_model.is_empty()
+                    && !relay.vlm_base_url.is_empty()
+                {
+                    let vlm_config = crate::vision::VlmConfig {
+                        api_key: relay.vlm_api_key.clone(),
+                        model: relay.vlm_model.clone(),
+                        base_url: relay.vlm_base_url.clone(),
+                    };
+
+                    for key in &["messages", "input"] {
+                        if let Some(arr) = body.get_mut(key).and_then(Value::as_array_mut) {
+                            crate::vision::strip_image_blocks(
+                                arr,
+                                &vlm_config,
+                                &relay.model_windows,
+                                &relay.context_window,
+                                &model,
+                            )
+                            .await;
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1929,7 +1995,7 @@ async fn open_custom_models_proxy_request(
     synthetic.protocol = model.protocol;
     synthetic.model = model.model.clone();
     let (endpoint, upstream_body, wire_api) =
-        upstream_request_parts(&synthetic, request_json.clone())?;
+        upstream_request_parts(&synthetic, request_json.clone()).await?;
     let _ = crate::diagnostic_log::append_diagnostic_log(
         "protocol_proxy.custom_model_request",
         json!({
