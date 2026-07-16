@@ -266,8 +266,14 @@ where
     let mut keep_launched_on_error = false;
 
     let result: anyhow::Result<LaunchHandle> = async {
+        let home = crate::relay_config::default_codex_home_dir();
         if settings.provider_sync_enabled {
+            crate::codex_app_state::capture_app_state_snapshot_nonfatal(&home, "launcher.before");
             hooks.run_provider_sync().await?;
+            crate::codex_app_state::sync_app_state_after_provider_switch_nonfatal(
+                &home,
+                "launcher.after_provider_sync",
+            );
         }
         if settings.codex_app_performance_protection {
             match crate::workspace_performance::prune_broad_saved_workspace_roots() {
@@ -291,7 +297,6 @@ where
         {
             hooks.apply_active_relay_profile(&settings).await?;
         }
-        let home = crate::relay_config::default_codex_home_dir();
         if let Err(error) = crate::relay_config::set_codex_sub_agent_max_threads_in_home(
             &home,
             settings.codex_app_sub_agent_max_threads,
@@ -806,6 +811,13 @@ impl LaunchHooks for DefaultLaunchHooks {
             settings.codex_app_disable_auto_update,
         )
         .context("failed to apply Codex automatic update policy")?;
+        if settings.enhancements_enabled {
+            let home = crate::relay_config::default_codex_home_dir();
+            crate::codex_app_state::prepare_projectless_main_window_nonfatal(
+                &home,
+                "launcher.prelaunch",
+            );
+        }
         let native_menu_localization_enabled = settings.codex_app_native_menu_localization;
         let native_menu_inspector_port =
             native_menu_localization_enabled.then(|| select_native_menu_inspector_port(debug_port));
