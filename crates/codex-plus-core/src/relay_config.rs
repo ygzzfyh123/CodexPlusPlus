@@ -92,6 +92,32 @@ pub fn default_relay_status() -> RelayStatus {
     relay_status_from_home(&default_codex_home_dir())
 }
 
+pub fn set_codex_sub_agent_max_threads_in_home(
+    home: &Path,
+    max_threads: u8,
+) -> anyhow::Result<bool> {
+    std::fs::create_dir_all(home)?;
+    let config_path = home.join("config.toml");
+    let existing = match std::fs::read_to_string(&config_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("读取 {} 失败", config_path.to_string_lossy()));
+        }
+    };
+    let mut doc = parse_toml_document(&existing)?;
+    let max_threads = crate::settings::clamp_codex_sub_agent_max_threads(max_threads) as i64;
+    let agents = table_mut_or_insert(&mut doc, "agents")?;
+    if agents.get("max_threads").and_then(Item::as_integer) == Some(max_threads) {
+        return Ok(false);
+    }
+    agents["max_threads"] = toml_edit::value(max_threads);
+    let updated = ensure_trailing_newline(doc.to_string());
+    crate::settings::atomic_write(&config_path, updated.as_bytes())?;
+    Ok(true)
+}
+
 pub fn set_codex_goals_feature_in_home(home: &Path, enabled: bool) -> anyhow::Result<()> {
     std::fs::create_dir_all(home)?;
     let config_path = home.join("config.toml");

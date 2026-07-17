@@ -76,6 +76,9 @@ pub trait BridgeRuntimeService: Send + Sync {
     async fn reload_user_scripts(&self) -> anyhow::Result<Value>;
     async fn open_devtools(&self) -> anyhow::Result<Value>;
     async fn open_manager(&self) -> anyhow::Result<Value>;
+    async fn restart_codex(&self, payload: Value) -> anyhow::Result<Value> {
+        request_codex_restart(&payload)
+    }
     async fn backend_status(&self) -> anyhow::Result<Value>;
     async fn codex_model_catalog(&self) -> anyhow::Result<Value>;
     async fn ads(&self) -> anyhow::Result<Value>;
@@ -166,6 +169,7 @@ pub async fn handle_bridge_request(
         "/user-scripts/reload" => ctx.runtime.reload_user_scripts().await,
         "/devtools/open" => ctx.runtime.open_devtools().await,
         "/manager/open" => ctx.runtime.open_manager().await,
+        "/codex/restart" => ctx.runtime.restart_codex(payload.clone()).await,
         "/backend/status" => ctx.runtime.backend_status().await,
         "/codex-model-catalog" | "/codex-config-model" => ctx.runtime.codex_model_catalog().await,
         "/diagnostics/log" => diagnostic_log_value(payload.clone()),
@@ -302,7 +306,15 @@ impl BridgeSettingsService for CoreSettingsService {
     }
 
     async fn set_settings(&self, payload: Value) -> anyhow::Result<BackendSettings> {
-        self.store.update(payload)
+        let update_sub_agent_limit = payload.get("codexAppSubAgentMaxThreads").is_some();
+        let settings = self.store.update(payload)?;
+        if update_sub_agent_limit {
+            crate::relay_config::set_codex_sub_agent_max_threads_in_home(
+                &crate::relay_config::default_codex_home_dir(),
+                settings.codex_app_sub_agent_max_threads,
+            )?;
+        }
+        Ok(settings)
     }
 
     async fn codex_app_version(&self) -> anyhow::Result<String> {
@@ -601,6 +613,36 @@ impl BridgeDataService for UnavailableDataService {
 
 fn manager_exe_path() -> PathBuf {
     crate::install::option_or_current_exe(&None, crate::install::MANAGER_BINARY)
+}
+
+pub fn request_codex_restart(payload: &Value) -> anyhow::Result<Value> {
+    let debug_port = payload
+        .get("debugPort")
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(9229);
+    let helper_port = payload
+        .get("helperPort")
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(crate::protocol_proxy::DEFAULT_PROTOCOL_PROXY_PORT);
+    crate::install::spawn_companion(
+        crate::install::MANAGER_BINARY,
+        [
+            "--restart-codex-now".to_string(),
+            "--debug-port".to_string(),
+            debug_port.to_string(),
+            "--helper-port".to_string(),
+            helper_port.to_string(),
+        ],
+    )
+    .map_err(|error| anyhow::anyhow!("启动 Codex 重启任务失败：{error}"))?;
+    Ok(json!({
+        "status": "accepted",
+        "message": "Codex 重启任务已开始",
+        "debugPort": debug_port,
+        "helperPort": helper_port,
+    }))
 }
 
 fn spawn_manager(manager_path: &Path) -> anyhow::Result<()> {

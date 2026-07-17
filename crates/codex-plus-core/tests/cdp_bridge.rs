@@ -569,6 +569,22 @@ fn injection_script_exposes_conversation_view_width_control() {
 }
 
 #[test]
+fn injection_script_exposes_sub_agent_number_input_hot_reload_and_restart_fallback() {
+    let script = assets::injection_script(57321);
+
+    assert!(script.contains("data-codex-plus-sub-agent-max-threads"));
+    assert!(script.contains("subAgentMinThreads = 3"));
+    assert!(script.contains("subAgentMaxThreads = 50"));
+    assert!(script.contains(r#"type="number""#));
+    assert!(!script.contains(r#"type="range""#));
+    assert!(script.contains("agents.max_threads"));
+    assert!(script.contains("batch-write-config-value"));
+    assert!(script.contains("reloadUserConfig: true"));
+    assert!(script.contains("data-codex-plus-restart-codex"));
+    assert!(script.contains("postJson(\"/codex/restart\""));
+}
+
+#[test]
 fn injection_script_exposes_sidebar_thread_id_badge_control() {
     let script = assets::injection_script(57321);
 
@@ -1398,7 +1414,7 @@ async fn install_bridge_routes_binding_while_waiting_for_command_response() {
                 "method": "Runtime.bindingCalled",
                 "params": {
                     "payload": serde_json::to_string(&json!({
-                        "id": "request-1",
+                        "id": "interleaved-success-request",
                         "path": "delete",
                         "payload": { "target": "session" },
                     })).unwrap(),
@@ -1447,7 +1463,8 @@ async fn install_bridge_routes_binding_while_waiting_for_command_response() {
         .await
         .expect("server task should finish without panicking");
     assert!(handled.load(Ordering::SeqCst));
-    assert!(!log_path.exists());
+    let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+    assert!(!log.contains("interleaved-success-request"));
     codex_plus_core::diagnostic_log::set_diagnostic_log_path_for_tests(None);
 }
 

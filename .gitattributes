@@ -6,3 +6,9 @@
 
 *.sh text eol=lf
 .github/workflows/*.yml text eol=lf
+
+# Keep repository-owner branding when selectively merging upstream releases.
+README.md merge=binary
+README_EN.md merge=binary
+assets/images/sponsor-alipay.jpg merge=binary
+assets/images/sponsor-wechat.jpg merge=binary

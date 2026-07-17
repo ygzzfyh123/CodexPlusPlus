@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const BACKUP_FORMAT: &str = "codex-plus-plus-backup";
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
+const LEGACY_SCHEMA_VERSION: u32 = 1;
 const MAX_BACKUP_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
@@ -45,6 +46,16 @@ struct ConfigBackup {
 struct CodexLiveBackup {
     config_toml: Option<String>,
     auth_json: Option<String>,
+    #[serde(default)]
+    dotenv: Option<String>,
+    #[serde(default)]
+    model_catalogs: Vec<CodexTextFileBackup>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CodexTextFileBackup {
+    name: String,
+    contents: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +116,17 @@ pub fn import_full_config(
         &paths.codex_home.join("auth.json"),
         backup.codex_live.auth_json.as_deref(),
     )?;
+    if backup.schema_version >= SCHEMA_VERSION {
+        restore_optional_text(
+            &paths.codex_home.join(".env"),
+            backup.codex_live.dotenv.as_deref(),
+        )?;
+        restore_named_text_files(
+            &paths.codex_home.join("model-catalogs"),
+            &backup.codex_live.model_catalogs,
+            "json",
+        )?;
+    }
     let script_config_bytes = serde_json::to_vec_pretty(&backup.user_scripts.config)?;
     atomic_replace(&paths.user_scripts_config_path, &script_config_bytes)?;
     restore_user_scripts(&paths.user_scripts_dir, &backup.user_scripts.files)?;
@@ -156,6 +178,11 @@ fn collect_backup(paths: &ConfigBackupPaths) -> anyhow::Result<ConfigBackup> {
         codex_live: CodexLiveBackup {
             config_toml: read_optional_text(&paths.codex_home.join("config.toml"))?,
             auth_json: read_optional_text(&paths.codex_home.join("auth.json"))?,
+            dotenv: read_optional_text(&paths.codex_home.join(".env"))?,
+            model_catalogs: collect_named_text_files(
+                &paths.codex_home.join("model-catalogs"),
+                "json",
+            )?,
         },
         user_scripts: UserScriptsBackup {
             config: script_config,
@@ -168,7 +195,7 @@ fn validate_backup(backup: &ConfigBackup) -> anyhow::Result<()> {
     if backup.format != BACKUP_FORMAT {
         anyhow::bail!("unsupported backup format: {}", backup.format);
     }
-    if backup.schema_version != SCHEMA_VERSION {
+    if !(LEGACY_SCHEMA_VERSION..=SCHEMA_VERSION).contains(&backup.schema_version) {
         anyhow::bail!(
             "unsupported backup schema version: {}",
             backup.schema_version
@@ -189,6 +216,15 @@ fn validate_backup(backup: &ConfigBackup) -> anyhow::Result<()> {
     }
     if let Some(auth) = backup.codex_live.auth_json.as_deref() {
         serde_json::from_str::<Value>(auth).context("backup auth.json is invalid")?;
+    }
+    let mut model_catalog_names = BTreeSet::new();
+    for catalog in &backup.codex_live.model_catalogs {
+        validate_named_text_file(&catalog.name, "json")?;
+        if !model_catalog_names.insert(catalog.name.to_ascii_lowercase()) {
+            anyhow::bail!("duplicate model catalog in backup: {}", catalog.name);
+        }
+        serde_json::from_str::<Value>(&catalog.contents)
+            .with_context(|| format!("backup model catalog is invalid: {}", catalog.name))?;
     }
     let mut names = BTreeSet::new();
     for script in &backup.user_scripts.files {
@@ -227,6 +263,80 @@ fn restore_user_scripts(directory: &Path, scripts: &[UserScriptBackup]) -> anyho
     }
     for script in scripts {
         atomic_replace(&directory.join(&script.name), script.contents.as_bytes())?;
+    }
+    Ok(())
+}
+
+fn collect_named_text_files(
+    directory: &Path,
+    extension: &str,
+) -> anyhow::Result<Vec<CodexTextFileBackup>> {
+    let mut files = Vec::new();
+    if !directory.exists() {
+        return Ok(files);
+    }
+    for entry in fs::read_dir(directory)
+        .with_context(|| format!("failed to read directory {}", directory.display()))?
+    {
+        let path = entry?.path();
+        if path.extension().and_then(|value| value.to_str()) != Some(extension) {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        validate_named_text_file(name, extension)?;
+        files.push(CodexTextFileBackup {
+            name: name.to_string(),
+            contents: fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?,
+        });
+    }
+    files.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(files)
+}
+
+fn restore_named_text_files(
+    directory: &Path,
+    files: &[CodexTextFileBackup],
+    extension: &str,
+) -> anyhow::Result<()> {
+    fs::create_dir_all(directory)
+        .with_context(|| format!("failed to create directory {}", directory.display()))?;
+    let imported = files
+        .iter()
+        .map(|file| file.name.to_ascii_lowercase())
+        .collect::<BTreeSet<_>>();
+    for entry in fs::read_dir(directory)? {
+        let path = entry?.path();
+        if path.extension().and_then(|value| value.to_str()) != Some(extension) {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if !imported.contains(&name.to_ascii_lowercase()) {
+            fs::remove_file(&path)
+                .with_context(|| format!("failed to remove {}", path.display()))?;
+        }
+    }
+    for file in files {
+        validate_named_text_file(&file.name, extension)?;
+        atomic_replace(&directory.join(&file.name), file.contents.as_bytes())?;
+    }
+    Ok(())
+}
+
+fn validate_named_text_file(name: &str, extension: &str) -> anyhow::Result<()> {
+    let path = Path::new(name);
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || path.components().count() != 1
+        || path.extension().and_then(|value| value.to_str()) != Some(extension)
+    {
+        anyhow::bail!("invalid backup filename: {name}");
     }
     Ok(())
 }
@@ -356,6 +466,17 @@ mod tests {
             r#"{"OPENAI_API_KEY":"secret"}"#,
         )
         .unwrap();
+        fs::write(
+            paths.codex_home.join(".env"),
+            "OPENAI_BASE_URL=https://relay.test\n",
+        )
+        .unwrap();
+        fs::create_dir_all(paths.codex_home.join("model-catalogs")).unwrap();
+        fs::write(
+            paths.codex_home.join("model-catalogs/custom.json"),
+            r#"{"models":[{"slug":"custom-model"}]}"#,
+        )
+        .unwrap();
         fs::write(&paths.user_scripts_config_path, r#"{"enabled":true}"#).unwrap();
         fs::write(
             paths.user_scripts_dir.join("example.js"),
@@ -371,6 +492,12 @@ mod tests {
             "model = \"changed\"\n",
         )
         .unwrap();
+        fs::write(paths.codex_home.join(".env"), "CHANGED=1\n").unwrap();
+        fs::write(
+            paths.codex_home.join("model-catalogs/extra.json"),
+            r#"{"models":[]}"#,
+        )
+        .unwrap();
         fs::write(paths.user_scripts_dir.join("extra.js"), "extra").unwrap();
         let result = import_full_config(&export_path, &paths).unwrap();
 
@@ -381,9 +508,51 @@ mod tests {
             fs::read_to_string(paths.codex_home.join("config.toml")).unwrap(),
             "model = \"test\"\n"
         );
+        assert_eq!(
+            fs::read_to_string(paths.codex_home.join(".env")).unwrap(),
+            "OPENAI_BASE_URL=https://relay.test\n"
+        );
+        assert!(paths.codex_home.join("model-catalogs/custom.json").exists());
+        assert!(!paths.codex_home.join("model-catalogs/extra.json").exists());
         assert!(paths.user_scripts_dir.join("example.js").exists());
         assert!(!paths.user_scripts_dir.join("extra.js").exists());
         assert!(Path::new(&result.automatic_backup_path).exists());
+    }
+
+    #[test]
+    fn legacy_backup_preserves_env_and_model_catalogs_missing_from_schema() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = test_paths(root.path());
+        fs::create_dir_all(paths.settings_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(&paths.codex_home).unwrap();
+        fs::create_dir_all(&paths.user_scripts_dir).unwrap();
+        fs::write(&paths.settings_path, r#"{"enhancementsEnabled":true}"#).unwrap();
+        fs::write(paths.codex_home.join("config.toml"), "model = \"legacy\"\n").unwrap();
+        fs::write(paths.codex_home.join("auth.json"), "{}").unwrap();
+        fs::write(paths.codex_home.join(".env"), "KEEP_ENV=1\n").unwrap();
+        fs::create_dir_all(paths.codex_home.join("model-catalogs")).unwrap();
+        fs::write(
+            paths.codex_home.join("model-catalogs/keep.json"),
+            r#"{"models":[{"slug":"keep"}]}"#,
+        )
+        .unwrap();
+
+        let export_path = root.path().join("legacy.json");
+        export_full_config(&export_path, &paths).unwrap();
+        let mut backup: Value = serde_json::from_slice(&fs::read(&export_path).unwrap()).unwrap();
+        backup["schemaVersion"] = Value::from(LEGACY_SCHEMA_VERSION);
+        let live = backup["codexLive"].as_object_mut().unwrap();
+        live.remove("dotenv");
+        live.remove("modelCatalogs");
+        fs::write(&export_path, serde_json::to_vec_pretty(&backup).unwrap()).unwrap();
+
+        import_full_config(&export_path, &paths).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(paths.codex_home.join(".env")).unwrap(),
+            "KEEP_ENV=1\n"
+        );
+        assert!(paths.codex_home.join("model-catalogs/keep.json").exists());
     }
 
     #[test]

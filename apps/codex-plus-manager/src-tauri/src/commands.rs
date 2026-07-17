@@ -518,8 +518,26 @@ pub fn load_settings() -> CommandResult<SettingsPayload> {
 #[tauri::command]
 pub fn save_settings(settings: BackendSettings) -> CommandResult<SettingsPayload> {
     let settings = normalize_settings_before_save(settings);
-    match SettingsStore::default().save(&settings) {
-        Ok(()) => settings_payload("设置已保存。", "设置保存后重新读取失败"),
+    let save_result = SettingsStore::default().save(&settings).and_then(|_| {
+        codex_plus_core::relay_config::set_codex_sub_agent_max_threads_in_home(
+            &codex_plus_core::relay_config::default_codex_home_dir(),
+            settings.codex_app_sub_agent_max_threads,
+        )
+        .map(|_| ())
+    });
+    match save_result {
+        Ok(()) => {
+            let max_threads = settings.codex_app_sub_agent_max_threads;
+            tauri::async_runtime::spawn(async move {
+                let _ =
+                    codex_plus_core::codex_config_reload::reload_user_config_with_sub_agent_limit(
+                        9229,
+                        max_threads,
+                    )
+                    .await;
+            });
+            settings_payload("设置已保存。", "设置保存后重新读取失败")
+        }
         Err(error) => failed(
             &format!("保存设置失败：{error}"),
             SettingsPayload {
@@ -2057,6 +2075,26 @@ pub fn switch_relay_profile(
         &previous_active_relay_id,
     ) {
         Ok(result) => {
+            let max_threads = result.settings.codex_app_sub_agent_max_threads;
+            tauri::async_runtime::spawn(async move {
+                let reload =
+                    codex_plus_core::codex_config_reload::reload_user_config_with_sub_agent_limit(
+                        9229,
+                        max_threads,
+                    )
+                    .await;
+                log_manager_event(
+                    if reload.is_ok() {
+                        "manager.switch_relay_profile.hot_reload_ok"
+                    } else {
+                        "manager.switch_relay_profile.hot_reload_failed"
+                    },
+                    json!({
+                        "maxThreads": max_threads,
+                        "error": reload.as_ref().err().map(ToString::to_string),
+                    }),
+                );
+            });
             let status = codex_plus_core::relay_config::relay_status_from_home(&home);
             log_manager_event(
                 "manager.switch_relay_profile.ok",
@@ -3476,6 +3514,13 @@ fn default_log_lines() -> usize {
 mod tests {
     use super::*;
 
+    fn codex_home_env_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[test]
     fn backend_version_returns_structured_payload() {
         let result = backend_version();
@@ -3668,6 +3713,7 @@ mod tests {
 
     #[test]
     fn env_conflict_commands_ignore_codex_home_and_remove_openai_vars() {
+        let _env_guard = codex_home_env_guard();
         let test_openai_name = "OPENAI_CODEX_PLUS_ENV_CONFLICT_TEST";
         let previous_openai = std::env::var_os(test_openai_name);
         let previous_codex_home = std::env::var_os("CODEX_HOME");
@@ -3719,6 +3765,7 @@ mod tests {
 
     #[test]
     fn delete_local_session_falls_back_when_requested_db_no_longer_contains_thread() {
+        let _env_guard = codex_home_env_guard();
         let temp = tempfile::tempdir().unwrap();
         let previous_codex_home = std::env::var_os("CODEX_HOME");
         let codex_home = temp.path().join("codex-home");
@@ -3785,6 +3832,7 @@ mod tests {
 
     #[test]
     fn list_local_sessions_deduplicates_threads_across_current_and_legacy_dbs() {
+        let _env_guard = codex_home_env_guard();
         let temp = tempfile::tempdir().unwrap();
         let previous_codex_home = std::env::var_os("CODEX_HOME");
         let codex_home = temp.path().join("codex-home");
@@ -3840,6 +3888,7 @@ mod tests {
 
     #[test]
     fn list_local_sessions_ignores_relation_only_thread_reference_dbs() {
+        let _env_guard = codex_home_env_guard();
         let temp = tempfile::tempdir().unwrap();
         let previous_codex_home = std::env::var_os("CODEX_HOME");
         let codex_home = temp.path().join("codex-home");
@@ -3863,7 +3912,7 @@ mod tests {
         unsafe {
             std::env::set_var("CODEX_HOME", &codex_home);
         }
-        let result = list_local_sessions();
+        let result = list_local_sessions(None);
         restore_codex_home(previous_codex_home);
 
         assert_eq!(result.status, "ok");
@@ -3874,6 +3923,7 @@ mod tests {
 
     #[test]
     fn delete_local_session_removes_duplicate_threads_from_all_candidate_dbs() {
+        let _env_guard = codex_home_env_guard();
         let temp = tempfile::tempdir().unwrap();
         let previous_codex_home = std::env::var_os("CODEX_HOME");
         let codex_home = temp.path().join("codex-home");

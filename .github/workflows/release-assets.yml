@@ -63,6 +63,9 @@ jobs:
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Verify local branding
+        run: node tools/check-local-branding.mjs
+
   windows:
     name: Windows x64
     needs: verify-version

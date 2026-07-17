@@ -5,6 +5,7 @@ pub mod autostart;
 pub mod bridge;
 pub mod ccs_import;
 pub mod cdp;
+pub mod codex_config_reload;
 pub mod codex_home;
 pub mod codex_local_storage;
 pub mod codex_sqlite;

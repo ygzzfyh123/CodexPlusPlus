@@ -1,0 +1,111 @@
+# CodexPlusPlus 定制与 Windows EXE 交付计划
+
+## 总体目标
+
+在现有 Rust + Tauri 2 + React 架构上完成开机自启、仓库链接迁移、更新源迁移、TUN 检测反转、推荐内容本地化、赞赏图替换、普通供应商压缩百分比设置，以及按模型独立路由的“添加供应商(可自定义)”功能 Meow~
+
+最终版本统一提升到 `1.2.36`，交付两个原始 EXE 和一个 Windows x64 安装程序 Meow~
+
+## 接口与数据模型
+
+- 在 [settings.rs](D:/Cursor/CodexPP/crates/codex-plus-core/src/settings.rs) 中为 `RelayMode` 增加 `CustomModels`，JSON 值使用 `customModels` Meow~
+- 新增 `CustomRelayModel`，字段固定为内部 `id`、`model`、`baseUrl`、`apiKey`、`protocol`、`contextWindow`、`autoCompactEnabled` 和 `autoCompactPercent` Meow~
+- `RelayProfile` 新增 `customModels: Vec<CustomRelayModel>`、`defaultCustomModelId`、`autoCompactEnabled` 和 `autoCompactPercent`，保留 `autoCompactLimit` 作为旧配置兼容字段 Meow~
+- `autoCompactPercent` 合法范围为 `1..=100`，默认显示 `80`，开关默认关闭，避免升级后擅自改变现有供应商行为 Meow~
+- 新增 `AutostartStatus { supported, enabled, executablePath }`，以及 Tauri 命令 `get_manager_autostart` 和 `set_manager_autostart_enabled` Meow~
+- 自定义供应商显式模型名采用严格匹配，显式传入未知模型时拒绝请求；请求未携带模型时使用 `defaultCustomModelId` 对应模型 Meow~
+
+## 实施步骤
+
+1. 仓库地址、关于页与更新源统一 Meow~
+
+- 在 [update.rs](D:/Cursor/CodexPP/crates/codex-plus-core/src/update.rs) 将仓库标识改为 `ygzzfyh123/CodexPlusPlus`，更新页面常量改为 `https://github.com/ygzzfyh123/CodexPlusPlus/releases` Meow~
+- 自动更新继续使用同仓库静态清单，机器读取地址明确为 `https://github.com/ygzzfyh123/CodexPlusPlus/releases/latest/download/latest.json`，不能直接解析 Releases HTML 页面 Meow~
+- 关于页项目主页改为 `https://github.com/ygzzfyh123/CodexPlusPlus`，反馈按钮改为其 `/issues`，项目地址文本同步更新 Meow~
+- 删除关于页 Discord 和 Telegram 按钮、相关图标引用、翻译文案及无用样式 Meow~
+- 更新 `Cargo.toml` 仓库元数据、README 中英文版链接和徽章、贡献文档、测试样例、交接记录、历史计划及备份规范中的旧主仓库地址 Meow~
+- 独立脚本市场继续使用 `BigPizzaV3/CodexPlusPlusScriptMarket`，因为新账号下同名仓库当前返回 404，且用户已确认保留该独立依赖 Meow~
+- 更新测试必须断言旧主仓库的完整地址不存在，同时不能误判独立脚本市场链接 Meow~
+
+2. 设置页增加管理器开机自启 Meow~
+
+- 在核心库新增 Windows autostart 模块，使用 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，值名固定为 `CodexPlusPlusManager` Meow~
+- 注册表命令写为 `"完整路径\codex-plus-plus-manager.exe" --hidden`，必须正确引用包含空格的路径 Meow~
+- 注册表状态作为唯一事实来源，不在 `settings.json` 再维护一份可能失真的副本 Meow~
+- 在 [commands.rs](D:/Cursor/CodexPP/apps/codex-plus-manager/src-tauri/src/commands.rs) 暴露读取和切换命令，并在 [lib.rs](D:/Cursor/CodexPP/apps/codex-plus-manager/src-tauri/src/lib.rs) 注册 Meow~
+- 在 [App.tsx](D:/Cursor/CodexPP/apps/codex-plus-manager/src/App.tsx) 的“基础设置”顶部增加“开机时启动 Codex++ 管理器”开关，切换后立即调用后端，失败时回滚 UI 并显示错误 Meow~
+- 管理器解析 `--hidden` 后仍创建托盘，但主窗口初始 `visible(false)`，手动启动时保持现有显示窗口行为 Meow~
+- NSIS 卸载段删除该 Run 项，防止卸载后残留无效启动项；普通覆盖升级不主动清除用户选择 Meow~
+- 非 Windows 平台返回 `supported: false`，界面禁用开关并说明当前平台不支持 Meow~
+
+3. 推荐内容完全本地化 Meow~
+
+- 将 `6ffc5797-11c6-4254-8a81-6b95a3afdc48.png` 复制到稳定资源目录并命名为 `assets/images/9527code.png`，通过 Rust `include_bytes!` 编入二进制 Meow~
+- [ads.rs](D:/Cursor/CodexPP/crates/codex-plus-core/src/ads.rs) 删除远程广告 URL、缓存破坏、远程请求、远程图片补全和内置赞助商追加逻辑 Meow~
+- 本地推荐数据只返回一项，名称严格为 `9527Code`，链接严格为 `https://api.9527code.com/register?aff=YmeM`，类型使用普通推荐且不设置过期时间 Meow~
+- 推荐介绍采用“面向 Codex 与 AI 编程工作流的模型服务入口，注册流程简洁，适合希望快速接入开发工具的用户。”，可配“Codex 友好”“快速注册”“开发者服务”三个短标签 Meow~
+- 管理器推荐页移除加载数量、远程来源说明、刷新按钮、赞助商分组和空状态，只渲染一张 9527Code 推荐卡 Meow~
+- [renderer-inject.js](D:/Cursor/CodexPP/assets/inject/renderer-inject.js) 删除远程广告 fetch、备用源、缓存参数和赞助商/普通推荐双分组，改为读取 Rust 注入的本地推荐对象 Meow~
+- Codex 内推荐菜单同样只显示 9527Code，断网时必须完整显示图片、介绍和跳转按钮 Meow~
+- 原赞赏区域继续保留，将 `1cbfe0036d462b027b7b043780f5d1cd.jpg` 作为支付宝图，将 `f3bbbeae08d704e7ca8a4006460283a9.jpg` 作为微信图，并替换 [assets.rs](D:/Cursor/CodexPP/crates/codex-plus-core/src/assets.rs) 中现有赞赏图片嵌入源 Meow~
+
+4. 中转站 TUN 环境检测反转 Meow~
+
+- 将 `RelayEnvironmentReport::all_passed()` 的 TUN 条件从 `!enabled` 改为 `enabled`，代理环境变量为空和 `.codex/.env` 不存在的原有条件继续保留 Meow~
+- 检测到 Clash Verge Rev TUN 已开启时显示绿色通过；检测到配置但 TUN 关闭时显示失败并提示开启 Meow~
+- 未找到 Clash Verge Rev 配置时按“TUN 未确认开启”处理，因此整体检测不能通过 Meow~
+- 同步修改中英文翻译、状态图标、汇总提示和现有反向文案，彻底移除“请关闭 TUN”含义 Meow~
+
+5. 普通供应商增加百分比自动压缩 Meow~
+
+- 普通“添加供应商”页在高级设置中使用开关加数字输入或滑块，关闭时不写自动压缩阈值，开启时要求有效上下文窗口 Meow~
+- 阈值 token 统一按 `contextWindow * autoCompactPercent / 100` 向下取整，并限制在 `1..=contextWindow` Meow~
+- 普通供应商有多个模型窗口时，对每个模型使用其独立窗口计算；模型窗口为空时回退供应商全局窗口 Meow~
+- 根 `config.toml` 写入默认模型对应的 `model_auto_compact_token_limit`，生成的 `model_catalog_json` 同时为每个模型写入其 `auto_compact_token_limit` Meow~
+- 加载旧配置时，若只有 `autoCompactLimit` 且存在上下文窗口，则按四舍五入换算百分比并启用新开关；无法换算时继续保留旧 token 值，直到用户明确修改 Meow~
+- 修改百分比后同时更新兼容用绝对 token 字段，确保旧读取路径和新模型目录路径行为一致 Meow~
+
+6. 新增“添加供应商(可自定义)” Meow~
+
+- 供应商列表工具栏增加第三个按钮，顺序为“添加供应商”“添加供应商(可自定义)”“添加聚合供应商” Meow~
+- 自定义页顶部只配置供应商名称和默认模型，不显示供应商级 Base URL、Key 或协议 Meow~
+- 模型采用可增删的独立编辑块，每块包含模型名、Base URL、密码型 Key、Responses/Chat Completions 协议选择、上下文窗口和自动压缩百分比设置 Meow~
+- 保存校验要求至少一个模型、模型名唯一、默认模型存在、Base URL 为 HTTP/HTTPS、Key 非空、上下文窗口为正整数或支持现有 `K/M` 语法 Meow~
+- 自定义供应商切为当前时，Codex 的 provider 固定指向 `http://127.0.0.1:57321/v1`，并写入本地代理占位凭据 Meow~
+- 为所有模型生成本地 `model_catalog_json`，每项包含真实上下文窗口和按百分比计算的 `auto_compact_token_limit`，顶层 `model` 使用默认模型 Meow~
+- `active_relay_uses_protocol_proxy()` 必须将 `CustomModels` 视为需要代理，确保从 Codex++ 启动时监听 57321 端口 Meow~
+- [protocol_proxy.rs](D:/Cursor/CodexPP/crates/codex-plus-core/src/protocol_proxy.rs) 在发送上游前读取请求 `model`，定位对应模型配置，并使用该模型自己的 Base URL、Key 和协议 Meow~
+- Responses 模型直接转发，Chat Completions 模型复用现有双向协议转换、流式 SSE 转换、工具调用和错误处理 Meow~
+- `/models` 在自定义模式下返回本地模型列表，不访问任一上游；显式未知模型返回可读的 400 错误且不包含 Key Meow~
+- 自定义模型编辑块提供单模型连接测试，复用现有模型列表、真实请求和 Provider Doctor 基础设施，但诊断日志只能记录模型名、协议和 endpoint，严禁记录 Key Meow~
+- 聚合供应商继续只聚合普通 API 供应商，不允许把自定义多模型供应商作为成员，避免模型路由与轮转策略产生未定义组合 Meow~
+
+7. 前端整理与版本同步 Meow~
+
+- 在中英文 i18n 中补齐开机自启、自定义供应商、模型路由、百分比压缩、TUN 新语义和本地推荐文案，并删除 Discord、Telegram、远程广告与刷新推荐文案 Meow~
+- 为三按钮工具栏、自定义模型编辑块和百分比控制增加响应式样式，保证 960x720 最小窗口及较窄宽度下字段不重叠 Meow~
+- 将 Cargo workspace、Tauri 配置、前端 `package.json` 和锁文件版本统一为 `1.2.36` Meow~
+
+## 测试与验收
+
+- 为 autostart 注册表值构造、带空格路径引用、启停状态、`--hidden` 参数和非 Windows 返回值增加单元测试 Meow~
+- 为 TUN 开启通过、TUN 关闭失败、配置缺失失败、代理环境变量仍阻止通过增加测试 Meow~
+- 为旧 token 阈值迁移、80% 换算、边界百分比、不同模型窗口和 catalog 输出增加 Rust 测试 Meow~
+- 为自定义模型序列化、默认模型校验、重复模型拒绝、未知模型拒绝、Responses 转发、Chat 转换和 Key 隔离增加测试 Meow~
+- 推荐测试断言只有 9527Code 一项、URL 完全匹配、PNG 为内嵌 data URI、无网络请求、两张新赞赏图被编入资源 Meow~
+- 执行 `npm run check`、`npm run vite:build`、`cargo test --workspace` 和 `cargo fmt --all --check` Meow~
+- 运行全仓扫描，确认 Discord、Telegram、远程广告源和旧主项目 URL 已清除，唯一允许保留的旧账号链接是独立脚本市场 Meow~
+- 在断网环境打开管理器推荐页和 Codex 内菜单，确认 9527Code 图片正常、按钮跳转正确、无加载或刷新状态 Meow~
+- 在 Windows 实机验证开机自启开关写入/删除 HKCU Run 项，并确认 `--hidden` 登录启动只出现托盘、不弹窗口 Meow~
+- 使用 TUN 开启和关闭两种 Clash Verge 配置做界面验收，并用两个不同本地 mock 上游确认同一自定义供应商可按模型路由到不同 Base URL 和协议 Meow~
+
+## 构建与交付
+
+- 全程只使用 Windows PowerShell、Cargo、npm 和原生 Windows 工具，禁止使用 WSL Meow~
+- 先在 `D:\Cursor\CodexPP\apps\codex-plus-manager` 执行 `npm ci`、`npm run check` 和 `npm run build`，该命令会构建前端、launcher 和 Tauri manager Meow~
+- 原始可执行文件必须出现在 `D:\Cursor\CodexPP\target\release\codex-plus-plus.exe` 和 `D:\Cursor\CodexPP\target\release\codex-plus-plus-manager.exe` Meow~
+- 本机当前缺少 NSIS，需先安装原生 Windows NSIS，并确认 `makensis.exe` 可调用 Meow~
+- 将两个 EXE 复制到 `D:\Cursor\CodexPP\dist\windows\app\`，再执行现有 `scripts\installer\windows\CodexPlusPlus.nsi`，传入 `/DVERSION=1.2.36` Meow~
+- 最终安装程序明确输出为 `D:\Cursor\CodexPP\dist\windows\CodexPlusPlus-1.2.36-windows-x64-setup.exe` Meow~
+- 对三个 EXE 生成 SHA-256，并实际启动 manager、验证托盘、推荐图片和自定义模型配置后再交付 Meow~
+- 新仓库当前还没有 Release，因此本地 EXE 可正常交付，但自动更新检查要等首次发布 `v1.2.36` 且工作流上传 `latest.json` 后才会返回有效结果 Meow~

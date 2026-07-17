@@ -87,6 +87,10 @@ fn apply_selected_relay_profile(
             settings.computer_use_guard_enabled,
         )?
     };
+    crate::relay_config::set_codex_sub_agent_max_threads_in_home(
+        home,
+        settings.codex_app_sub_agent_max_threads,
+    )?;
     let status = relay_config_status_from_home(home);
     if relay.relay_mode == RelayMode::PureApi && !status.configured {
         anyhow::bail!(

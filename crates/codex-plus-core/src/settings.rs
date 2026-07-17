@@ -307,6 +307,12 @@ pub struct BackendSettings {
     pub codex_app_native_menu_localization: bool,
     #[serde(rename = "codexAppServiceTierControls", default)]
     pub codex_app_service_tier_controls: bool,
+    #[serde(
+        rename = "codexAppSubAgentMaxThreads",
+        default = "default_codex_sub_agent_max_threads",
+        deserialize_with = "deserialize_codex_sub_agent_max_threads"
+    )]
+    pub codex_app_sub_agent_max_threads: u8,
     #[serde(rename = "codexAppPetRealMouseLook", default)]
     pub codex_app_pet_real_mouse_look: bool,
     #[serde(rename = "codexAppStepwiseEnabled", default)]
@@ -422,6 +428,7 @@ impl Default for BackendSettings {
             codex_app_native_menu_placement: true,
             codex_app_native_menu_localization: true,
             codex_app_service_tier_controls: false,
+            codex_app_sub_agent_max_threads: default_codex_sub_agent_max_threads(),
             codex_app_pet_real_mouse_look: false,
             codex_app_stepwise_enabled: false,
             codex_app_stepwise_direct_send: false,
@@ -579,6 +586,17 @@ impl BackendSettings {
 
 pub fn default_stepwise_api_key_env() -> String {
     "CODEX_STEPWISE_API_KEY".to_string()
+}
+
+pub const CODEX_SUB_AGENT_MIN_THREADS: u8 = 3;
+pub const CODEX_SUB_AGENT_MAX_THREADS: u8 = 50;
+
+pub fn default_codex_sub_agent_max_threads() -> u8 {
+    CODEX_SUB_AGENT_MIN_THREADS
+}
+
+pub fn clamp_codex_sub_agent_max_threads(value: u8) -> u8 {
+    value.clamp(CODEX_SUB_AGENT_MIN_THREADS, CODEX_SUB_AGENT_MAX_THREADS)
 }
 
 pub fn default_stepwise_max_items() -> u8 {
@@ -799,6 +817,17 @@ where
         .unwrap_or_else(default_image_overlay_fit_mode))
 }
 
+fn deserialize_codex_sub_agent_max_threads<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<u64>::deserialize(deserializer)?
+        .unwrap_or_else(|| u64::from(default_codex_sub_agent_max_threads()));
+    Ok(clamp_codex_sub_agent_max_threads(
+        u8::try_from(value).unwrap_or(CODEX_SUB_AGENT_MAX_THREADS),
+    ))
+}
+
 fn deserialize_stepwise_max_items<'de, D>(deserializer: D) -> Result<u8, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -992,6 +1021,17 @@ fn merge_known_setting_fields(target: &mut Map<String, Value>, source: &Map<Stri
     merge_bool_setting(target, source, "codexAppNativeMenuPlacement");
     merge_bool_setting(target, source, "codexAppNativeMenuLocalization");
     merge_bool_setting(target, source, "codexAppServiceTierControls");
+    if let Some(value) = source
+        .get("codexAppSubAgentMaxThreads")
+        .and_then(Value::as_u64)
+    {
+        target.insert(
+            "codexAppSubAgentMaxThreads".to_string(),
+            Value::Number(serde_json::Number::from(clamp_codex_sub_agent_max_threads(
+                u8::try_from(value).unwrap_or(CODEX_SUB_AGENT_MAX_THREADS),
+            ))),
+        );
+    }
     merge_bool_setting(target, source, "codexAppPetRealMouseLook");
     merge_bool_setting(target, source, "codexAppStepwiseEnabled");
     merge_bool_setting(target, source, "codexAppStepwiseDirectSend");
@@ -1292,6 +1332,8 @@ fn normalize_settings_config_sections(mut settings: BackendSettings) -> BackendS
         clamp_image_overlay_opacity(settings.codex_app_image_overlay_opacity);
     settings.codex_app_image_overlay_fit_mode =
         normalize_image_overlay_fit_mode(&settings.codex_app_image_overlay_fit_mode);
+    settings.codex_app_sub_agent_max_threads =
+        clamp_codex_sub_agent_max_threads(settings.codex_app_sub_agent_max_threads);
     settings.codex_app_stepwise_base_url = settings
         .codex_app_stepwise_base_url
         .trim()
@@ -1482,6 +1524,10 @@ mod tests {
         assert!(settings.zed_remote_project_registry_enabled);
         assert!(!settings.zed_remote_sync_to_zed_settings);
         assert!(settings.codex_app_native_menu_localization);
+        assert_eq!(
+            settings.codex_app_sub_agent_max_threads,
+            default_codex_sub_agent_max_threads()
+        );
         assert_eq!(settings.launch_mode, LaunchMode::Patch);
         assert_eq!(settings.relay_base_url, default_relay_base_url());
         assert!(settings.relay_api_key.is_empty());
@@ -1501,6 +1547,23 @@ mod tests {
         assert_eq!(settings.codex_app_stepwise_max_input_chars, 6000);
         assert_eq!(settings.codex_app_stepwise_max_output_tokens, 500);
         assert_eq!(settings.codex_app_stepwise_timeout_ms, 8000);
+    }
+
+    #[test]
+    fn sub_agent_max_threads_deserializes_with_three_to_fifty_bounds() {
+        let below: BackendSettings =
+            serde_json::from_str(r#"{"codexAppSubAgentMaxThreads":1}"#).unwrap();
+        let above: BackendSettings =
+            serde_json::from_str(r#"{"codexAppSubAgentMaxThreads":99}"#).unwrap();
+
+        assert_eq!(
+            below.codex_app_sub_agent_max_threads,
+            CODEX_SUB_AGENT_MIN_THREADS
+        );
+        assert_eq!(
+            above.codex_app_sub_agent_max_threads,
+            CODEX_SUB_AGENT_MAX_THREADS
+        );
     }
 
     #[test]
@@ -2022,6 +2085,7 @@ experimental_bearer_token = "sk-existing""#
             "codexAppThreadIdBadge": true,
             "codexAppNativeMenuLocalization": false,
             "codexAppServiceTierControls": true,
+            "codexAppSubAgentMaxThreads": 7,
             "codexAppPetRealMouseLook": true,
             "codexGoalsEnabled": true,
             "relayBaseUrl": "https://relay.example.test/v1",
@@ -2038,6 +2102,7 @@ experimental_bearer_token = "sk-existing""#
         assert!(updated.codex_app_conversation_view);
         assert!(updated.codex_app_thread_id_badge);
         assert!(!updated.codex_app_native_menu_localization);
+        assert_eq!(updated.codex_app_sub_agent_max_threads, 7);
         assert!(updated.codex_app_service_tier_controls);
         assert!(updated.codex_app_pet_real_mouse_look);
         assert!(updated.codex_goals_enabled);

@@ -11,8 +11,9 @@ use codex_plus_core::relay_config::{
     extract_common_config_from_config, filter_common_config_for_selection,
     list_context_entries_from_common_config, normalize_relay_profile_for_storage,
     relay_config_status_from_home, sanitize_common_config_contents,
-    set_codex_goals_feature_in_home, strip_common_config_from_config,
-    sync_live_config_context_entries, upsert_context_entry_in_common_config,
+    set_codex_goals_feature_in_home, set_codex_sub_agent_max_threads_in_home,
+    strip_common_config_from_config, sync_live_config_context_entries,
+    upsert_context_entry_in_common_config,
 };
 use codex_plus_core::settings::{
     CustomRelayModel, RelayContextSelection, RelayMode, RelayProfile, RelayProtocol,
@@ -1163,6 +1164,25 @@ other = true
     assert!(config.contains("[features]"));
     assert!(config.contains("other = true"));
     assert!(!config.contains("goals = true"));
+}
+
+#[test]
+fn set_codex_sub_agent_max_threads_preserves_config_and_clamps_value() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        temp.path().join("config.toml"),
+        "model = \"gpt-5.5\"\n\n[features]\ngoals = true\n",
+    )
+    .unwrap();
+
+    assert!(set_codex_sub_agent_max_threads_in_home(temp.path(), 99).unwrap());
+    assert!(!set_codex_sub_agent_max_threads_in_home(temp.path(), 50).unwrap());
+
+    let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    let parsed = config.parse::<toml::Value>().unwrap();
+    assert_eq!(parsed["model"].as_str(), Some("gpt-5.5"));
+    assert_eq!(parsed["features"]["goals"].as_bool(), Some(true));
+    assert_eq!(parsed["agents"]["max_threads"].as_integer(), Some(50));
 }
 
 #[test]

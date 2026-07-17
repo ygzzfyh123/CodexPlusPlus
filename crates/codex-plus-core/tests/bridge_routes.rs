@@ -31,6 +31,10 @@ async fn bridge_routes_cover_all_current_paths() {
         ("/user-scripts/reload", json!({})),
         ("/devtools/open", json!({})),
         ("/manager/open", json!({})),
+        (
+            "/codex/restart",
+            json!({"debugPort": 9229, "helperPort": 57321}),
+        ),
         ("/backend/status", json!({})),
         ("/codex-model-catalog", json!({})),
         ("/codex-config-model", json!({})),
@@ -1044,6 +1048,12 @@ impl BridgeSettingsService for FakeSettings {
         if let Some(value) = payload.get("launchMode").and_then(Value::as_str) {
             raw.insert("launchMode".to_string(), json!(value));
         }
+        if let Some(value) = payload
+            .get("codexAppSubAgentMaxThreads")
+            .and_then(Value::as_u64)
+        {
+            raw.insert("codexAppSubAgentMaxThreads".to_string(), json!(value));
+        }
         if let Some(value) = payload.get("relayBaseUrl").and_then(Value::as_str) {
             raw.insert("relayBaseUrl".to_string(), json!(value));
         }
@@ -1107,6 +1117,14 @@ impl BridgeRuntimeService for FakeRuntime {
 
     async fn open_manager(&self) -> anyhow::Result<Value> {
         Ok(json!({"status": "ok", "opened": "manager"}))
+    }
+
+    async fn restart_codex(&self, payload: Value) -> anyhow::Result<Value> {
+        Ok(json!({
+            "status": "accepted",
+            "debugPort": payload.get("debugPort").cloned().unwrap_or(json!(9229)),
+            "helperPort": payload.get("helperPort").cloned().unwrap_or(json!(57321)),
+        }))
     }
 
     async fn backend_status(&self) -> anyhow::Result<Value> {

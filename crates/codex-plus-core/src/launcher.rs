@@ -291,6 +291,19 @@ where
         {
             hooks.apply_active_relay_profile(&settings).await?;
         }
+        let home = crate::relay_config::default_codex_home_dir();
+        if let Err(error) = crate::relay_config::set_codex_sub_agent_max_threads_in_home(
+            &home,
+            settings.codex_app_sub_agent_max_threads,
+        ) {
+            let _ = crate::diagnostic_log::append_diagnostic_log(
+                "launcher.sub_agent_limit_config_failed_nonfatal",
+                serde_json::json!({
+                    "max_threads": settings.codex_app_sub_agent_max_threads,
+                    "message": error.to_string()
+                }),
+            );
+        }
         if let Err(error) = hooks.ensure_plugin_marketplace_config(&settings).await {
             let _ = crate::diagnostic_log::append_diagnostic_log(
                 "launcher.plugin_marketplace_config_failed_nonfatal",
@@ -302,7 +315,6 @@ where
         if settings.computer_use_guard_enabled {
             hooks.ensure_computer_use_config(&settings).await?;
         }
-        let home = crate::relay_config::default_codex_home_dir();
         match crate::codex_sqlite::sanitize_historical_model_suffixes(&home) {
             Ok(result) if result.updated > 0 => {
                 let _ = crate::diagnostic_log::append_diagnostic_log(
