@@ -521,7 +521,7 @@ fn responses_request_normalizes_empty_assistant_messages_for_chat_upstream() {
 }
 
 #[test]
-fn responses_request_drops_tool_controls_when_no_chat_tools_survive() {
+fn responses_request_preserves_named_unknown_tools_as_custom_proxies() {
     let converted = responses_to_chat_completions(json!({
         "model": "gpt-5-mini",
         "input": "hi",
@@ -533,9 +533,13 @@ fn responses_request_drops_tool_controls_when_no_chat_tools_survive() {
     }))
     .unwrap();
 
-    assert!(converted.get("tools").is_none());
-    assert!(converted.get("tool_choice").is_none());
-    assert!(converted.get("parallel_tool_calls").is_none());
+    assert_eq!(converted["tools"][0]["function"]["name"], "unsupported");
+    assert_eq!(
+        converted["tools"][0]["function"]["parameters"]["properties"]["input"]["type"],
+        "string"
+    );
+    assert_eq!(converted["tool_choice"], json!({ "type": "required" }));
+    assert_eq!(converted["parallel_tool_calls"], true);
 }
 
 #[test]
@@ -619,6 +623,82 @@ fn responses_request_maps_codex_custom_and_namespace_tools_to_chat_functions() {
     assert_eq!(
         converted["tool_choice"]["function"]["name"],
         "mcp__vscode_mcp__open_file"
+    );
+}
+
+#[test]
+fn responses_request_preserves_newer_named_and_namespaced_tool_shapes() {
+    let converted = responses_to_chat_completions(json!({
+        "model": "gpt-5-mini",
+        "input": "hi",
+        "tools": [
+            {
+                "type": "runtime_shell",
+                "name": "shell_command",
+                "description": "Run a shell command",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string" }
+                    },
+                    "required": ["command"]
+                }
+            },
+            {
+                "type": "namespace",
+                "name": "functions",
+                "description": "Desktop tools",
+                "tools": [
+                    {
+                        "type": "runtime_file",
+                        "name": "read_file",
+                        "description": "Read a local file",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "path": { "type": "string" }
+                            },
+                            "required": ["path"]
+                        }
+                    },
+                    {
+                        "type": "custom",
+                        "name": "exec",
+                        "description": "Run an interactive command"
+                    },
+                    {
+                        "type": "local_shell",
+                        "name": "terminal"
+                    }
+                ]
+            }
+        ]
+    }))
+    .unwrap();
+
+    let names: Vec<_> = converted["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["function"]["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"shell_command"));
+    assert!(names.contains(&"functions__read_file"));
+    assert!(names.contains(&"functions__exec"));
+    assert!(names.contains(&"functions__terminal"));
+    assert_eq!(
+        converted["tools"][0]["function"]["parameters"]["required"],
+        json!(["command"])
+    );
+    let read_file = converted["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["function"]["name"] == "functions__read_file")
+        .unwrap();
+    assert_eq!(
+        read_file["function"]["parameters"]["required"],
+        json!(["path"])
     );
 }
 
@@ -1100,6 +1180,70 @@ fn chat_completion_response_maps_custom_and_namespace_calls_with_request_context
     assert_eq!(converted["output"][1]["type"], "function_call");
     assert_eq!(converted["output"][1]["name"], "open_file");
     assert_eq!(converted["output"][1]["namespace"], "mcp__vscode_mcp__");
+}
+
+#[test]
+fn chat_completion_response_maps_newer_namespaced_tool_shapes_with_request_context() {
+    let request = json!({
+        "model": "gpt-5-mini",
+        "input": "hi",
+        "tools": [{
+            "type": "namespace",
+            "name": "functions",
+            "tools": [
+                {
+                    "type": "runtime_file",
+                    "name": "read_file",
+                    "input_schema": { "type": "object" }
+                },
+                {
+                    "type": "custom",
+                    "name": "exec"
+                }
+            ]
+        }]
+    });
+    let converted = chat_completion_to_response_with_request(
+        json!({
+            "id": "chatcmpl_newer_tools",
+            "created": 123,
+            "model": "gpt-5-mini",
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call_read",
+                            "type": "function",
+                            "function": {
+                                "name": "functions__read_file",
+                                "arguments": "{\"path\":\"src/main.rs\"}"
+                            }
+                        },
+                        {
+                            "id": "call_exec",
+                            "type": "function",
+                            "function": {
+                                "name": "functions__exec",
+                                "arguments": "{\"input\":\"dir\"}"
+                            }
+                        }
+                    ]
+                }
+            }]
+        }),
+        &request,
+    )
+    .unwrap();
+
+    assert_eq!(converted["output"][0]["type"], "function_call");
+    assert_eq!(converted["output"][0]["name"], "read_file");
+    assert_eq!(converted["output"][0]["namespace"], "functions");
+    assert_eq!(converted["output"][1]["type"], "custom_tool_call");
+    assert_eq!(converted["output"][1]["name"], "exec");
+    assert_eq!(converted["output"][1]["namespace"], "functions");
+    assert_eq!(converted["output"][1]["input"], "dir");
 }
 
 #[test]

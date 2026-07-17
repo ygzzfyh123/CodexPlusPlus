@@ -60,6 +60,7 @@ struct CodexToolContext {
 #[derive(Debug, Clone)]
 struct CodexCustomToolSpec {
     openai_name: String,
+    namespace: String,
     kind: CodexCustomToolKind,
     proxy_action: Option<CodexPatchProxyAction>,
 }
@@ -109,11 +110,11 @@ impl CodexToolContext {
         self.custom_tools.contains_key(upstream_name)
     }
 
-    fn original_custom_tool_name(&self, upstream_name: &str) -> String {
+    fn openai_name_for_custom_tool(&self, upstream_name: &str) -> (String, String) {
         self.custom_tools
             .get(upstream_name)
-            .map(|spec| spec.openai_name.clone())
-            .unwrap_or_else(|| upstream_name.to_string())
+            .map(|spec| (spec.openai_name.clone(), spec.namespace.clone()))
+            .unwrap_or_else(|| (upstream_name.to_string(), String::new()))
     }
 
     fn openai_name_for_function_tool(&self, upstream_name: &str) -> (String, String) {
@@ -1472,7 +1473,9 @@ async fn open_responses_proxy_request_with_settings_and_user_agent(
                 "stream": is_stream,
                 "attempt": attempt + 1,
                 "candidateCount": relay_count,
-                "headerTimeoutSeconds": header_timeout.as_secs()
+                "headerTimeoutSeconds": header_timeout.as_secs(),
+                "requestToolSummary": response_tools_diagnostic_summary(request_json.get("tools")),
+                "upstreamToolSummary": response_tools_diagnostic_summary(upstream_body.get("tools"))
             }),
         );
         let upstream = match send_upstream_request_for_responses(
@@ -3730,6 +3733,7 @@ fn build_codex_tool_context(tools: Option<&Value>) -> CodexToolContext {
                     name.to_string(),
                     CodexCustomToolSpec {
                         openai_name: "apply_patch".to_string(),
+                        namespace: String::new(),
                         kind: CodexCustomToolKind::ApplyPatch,
                         proxy_action: Some(action),
                     },
@@ -3741,6 +3745,7 @@ fn build_codex_tool_context(tools: Option<&Value>) -> CodexToolContext {
                 name.to_string(),
                 CodexCustomToolSpec {
                     openai_name: name.to_string(),
+                    namespace: String::new(),
                     kind: CodexCustomToolKind::Raw,
                     proxy_action: None,
                 },
@@ -3748,79 +3753,20 @@ fn build_codex_tool_context(tools: Option<&Value>) -> CodexToolContext {
             context.has_custom_tools = true;
             continue;
         }
-        let tool_type = tool.get("type").and_then(Value::as_str).unwrap_or("");
-        match tool_type {
-            "custom" => {
-                let Some(name) = tool
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .filter(|v| !v.is_empty())
-                else {
-                    continue;
-                };
-                let kind = detect_codex_custom_tool_kind(tool, name);
-                context.custom_tools.insert(
+        if response_tool_type(tool) == "namespace" {
+            add_namespace_tools_to_context(&mut context, tool);
+        } else if response_tool_is_structured_function(tool) {
+            if let Some(name) = response_tool_name(tool) {
+                context.function_tools.insert(
                     name.to_string(),
-                    CodexCustomToolSpec {
-                        openai_name: name.to_string(),
-                        kind,
-                        proxy_action: None,
+                    CodexFunctionToolSpec {
+                        name: name.to_string(),
+                        namespace: String::new(),
                     },
                 );
-                if kind == CodexCustomToolKind::ApplyPatch {
-                    for action in [
-                        CodexPatchProxyAction::AddFile,
-                        CodexPatchProxyAction::DeleteFile,
-                        CodexPatchProxyAction::UpdateFile,
-                        CodexPatchProxyAction::ReplaceFile,
-                        CodexPatchProxyAction::Batch,
-                    ] {
-                        let proxy_name = format!("{name}_{}", action.suffix());
-                        context.custom_tools.insert(
-                            proxy_name,
-                            CodexCustomToolSpec {
-                                openai_name: name.to_string(),
-                                kind: CodexCustomToolKind::ApplyPatch,
-                                proxy_action: Some(action),
-                            },
-                        );
-                    }
-                }
-                context.has_custom_tools = true;
             }
-            "function" => {
-                if let Some(name) = tool
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .filter(|v| !v.is_empty())
-                {
-                    context.function_tools.insert(
-                        name.to_string(),
-                        CodexFunctionToolSpec {
-                            name: name.to_string(),
-                            namespace: String::new(),
-                        },
-                    );
-                }
-            }
-            "namespace" => add_namespace_tools_to_context(&mut context, tool),
-            "web_search" | "local_shell" | "computer_use" => {
-                let name = tool
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .filter(|v| !v.is_empty())
-                    .unwrap_or(tool_type);
-                context.custom_tools.insert(
-                    name.to_string(),
-                    CodexCustomToolSpec {
-                        openai_name: name.to_string(),
-                        kind: CodexCustomToolKind::BuiltIn,
-                        proxy_action: None,
-                    },
-                );
-                context.has_custom_tools = true;
-            }
-            _ => {}
+        } else if let Some((upstream_name, openai_name)) = response_tool_proxy_names("", tool) {
+            add_custom_tool_to_context(&mut context, &upstream_name, &openai_name, "", tool);
         }
     }
 
@@ -3836,38 +3782,40 @@ fn add_namespace_tools_to_context(context: &mut CodexToolContext, namespace_tool
         return;
     };
     for child in children {
-        if child.get("type").and_then(Value::as_str) != Some("function") {
-            continue;
-        }
-        let Some(name) = child
-            .get("name")
-            .and_then(Value::as_str)
-            .filter(|v| !v.is_empty())
-        else {
-            continue;
-        };
-        let flat = flatten_namespace_tool_name(namespace, name);
-        if namespace.is_empty() {
-            context.function_tools.insert(
-                flat,
-                CodexFunctionToolSpec {
-                    namespace: namespace.to_string(),
-                    name: name.to_string(),
-                },
-            );
-        } else if context
-            .function_tools
-            .get(&flat)
-            .is_none_or(|spec| !spec.namespace.is_empty())
+        if response_tool_is_structured_function(child) {
+            let Some(name) = response_tool_name(child) else {
+                continue;
+            };
+            let flat = flatten_namespace_tool_name(namespace, name);
+            if namespace.is_empty() {
+                context.function_tools.insert(
+                    flat,
+                    CodexFunctionToolSpec {
+                        namespace: namespace.to_string(),
+                        name: name.to_string(),
+                    },
+                );
+            } else if context
+                .function_tools
+                .get(&flat)
+                .is_none_or(|spec| !spec.namespace.is_empty())
+            {
+                context.function_tools.insert(
+                    flat,
+                    CodexFunctionToolSpec {
+                        namespace: namespace.to_string(),
+                        name: name.to_string(),
+                    },
+                );
+                context.has_namespace_tools = true;
+            }
+        } else if let Some((upstream_name, openai_name)) =
+            response_tool_proxy_names(namespace, child)
         {
-            context.function_tools.insert(
-                flat,
-                CodexFunctionToolSpec {
-                    namespace: namespace.to_string(),
-                    name: name.to_string(),
-                },
-            );
-            context.has_namespace_tools = true;
+            add_custom_tool_to_context(context, &upstream_name, &openai_name, namespace, child);
+            if !namespace.is_empty() {
+                context.has_namespace_tools = true;
+            }
         }
     }
 }
@@ -3879,34 +3827,118 @@ fn responses_tools_to_chat_tools(tools: &[Value], context: &CodexToolContext) ->
             converted.push(generic_custom_proxy_tool(name, ""));
             continue;
         }
-        match tool.get("type").and_then(Value::as_str).unwrap_or("") {
-            "function" => {
-                if let Some(tool) = responses_function_tool_to_chat_tool(tool) {
-                    converted.push(tool);
-                }
+        if response_tool_type(tool) == "namespace" {
+            converted.extend(namespace_tool_to_chat_tools(tool, context));
+        } else if response_tool_is_structured_function(tool) {
+            if let Some(tool) = responses_function_tool_to_chat_tool(tool) {
+                converted.push(tool);
             }
-            "custom" | "web_search" | "local_shell" | "computer_use" => {
-                let tool_type = tool.get("type").and_then(Value::as_str).unwrap_or("");
-                let name = tool
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .filter(|v| !v.is_empty())
-                    .unwrap_or(tool_type);
-                let description = tool
-                    .get("description")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                if detect_codex_custom_tool_kind(tool, name) == CodexCustomToolKind::ApplyPatch {
-                    converted.extend(apply_patch_proxy_tools(name, description));
-                } else {
-                    converted.push(generic_custom_proxy_tool(name, description));
-                }
+        } else if let Some((upstream_name, openai_name)) = response_tool_proxy_names("", tool) {
+            let description = response_tool_description(tool);
+            if detect_codex_custom_tool_kind(tool, &openai_name) == CodexCustomToolKind::ApplyPatch
+            {
+                converted.extend(apply_patch_proxy_tools(&upstream_name, description));
+            } else {
+                converted.push(generic_custom_proxy_tool(&upstream_name, description));
             }
-            "namespace" => converted.extend(namespace_tool_to_chat_tools(tool, context)),
-            _ => {}
         }
     }
     converted
+}
+
+fn response_tool_type(tool: &Value) -> &str {
+    tool.get("type").and_then(Value::as_str).unwrap_or("")
+}
+
+fn response_tool_name(tool: &Value) -> Option<&str> {
+    tool.get("name")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            tool.pointer("/function/name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+        })
+}
+
+fn response_tool_description(tool: &Value) -> &str {
+    tool.get("description")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            tool.pointer("/function/description")
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("")
+}
+
+fn response_tool_parameters(tool: &Value) -> Option<&Value> {
+    ["parameters", "input_schema", "inputSchema", "schema"]
+        .into_iter()
+        .find_map(|key| tool.get(key))
+        .or_else(|| tool.pointer("/function/parameters"))
+}
+
+fn response_tool_is_structured_function(tool: &Value) -> bool {
+    match response_tool_type(tool) {
+        "custom" | "web_search" | "local_shell" | "computer_use" => false,
+        "function" => true,
+        _ => {
+            tool.get("function").is_some_and(Value::is_object)
+                || (response_tool_name(tool).is_some() && response_tool_parameters(tool).is_some())
+        }
+    }
+}
+
+fn response_tool_proxy_names(namespace: &str, tool: &Value) -> Option<(String, String)> {
+    let name = response_tool_name(tool).or_else(|| {
+        let tool_type = response_tool_type(tool);
+        (!tool_type.is_empty() && tool_type != "function" && tool_type != "namespace")
+            .then_some(tool_type)
+    })?;
+    Some((
+        flatten_namespace_tool_name(namespace, name),
+        name.to_string(),
+    ))
+}
+
+fn add_custom_tool_to_context(
+    context: &mut CodexToolContext,
+    upstream_name: &str,
+    openai_name: &str,
+    namespace: &str,
+    tool: &Value,
+) {
+    let kind = detect_codex_custom_tool_kind(tool, openai_name);
+    context.custom_tools.insert(
+        upstream_name.to_string(),
+        CodexCustomToolSpec {
+            openai_name: openai_name.to_string(),
+            namespace: namespace.to_string(),
+            kind,
+            proxy_action: None,
+        },
+    );
+    if kind == CodexCustomToolKind::ApplyPatch {
+        for action in [
+            CodexPatchProxyAction::AddFile,
+            CodexPatchProxyAction::DeleteFile,
+            CodexPatchProxyAction::UpdateFile,
+            CodexPatchProxyAction::ReplaceFile,
+            CodexPatchProxyAction::Batch,
+        ] {
+            let proxy_name = format!("{upstream_name}_{}", action.suffix());
+            context.custom_tools.insert(
+                proxy_name,
+                CodexCustomToolSpec {
+                    openai_name: openai_name.to_string(),
+                    namespace: namespace.to_string(),
+                    kind: CodexCustomToolKind::ApplyPatch,
+                    proxy_action: Some(action),
+                },
+            );
+        }
+    }
+    context.has_custom_tools = true;
 }
 
 fn detect_codex_custom_tool_kind(tool: &Value, name: &str) -> CodexCustomToolKind {
@@ -3932,32 +3964,20 @@ fn detect_codex_custom_tool_kind(tool: &Value, name: &str) -> CodexCustomToolKin
 }
 
 fn responses_function_tool_to_chat_tool(tool: &Value) -> Option<Value> {
-    if tool.get("type").and_then(Value::as_str) != Some("function") {
+    if !response_tool_is_structured_function(tool) {
         return None;
     }
-    if tool.get("function").is_some() {
-        let mut chat_tool = tool.clone();
-        if let Some(strict) = tool.get("strict").cloned() {
-            if let Some(function) = chat_tool.get_mut("function").and_then(Value::as_object_mut) {
-                function.entry("strict".to_string()).or_insert(strict);
-            }
-            if let Some(object) = chat_tool.as_object_mut() {
-                object.remove("strict");
-            }
-        }
-        if let Some(function) = chat_tool.get_mut("function").and_then(Value::as_object_mut) {
-            let normalized =
-                normalize_chat_tool_parameters(function.get("parameters").unwrap_or(&json!({})));
-            function.insert("parameters".to_string(), normalized);
-        }
-        return Some(chat_tool);
-    }
+    let name = response_tool_name(tool)?;
     let mut function = json!({
-        "name": tool.get("name").and_then(Value::as_str).unwrap_or(""),
-        "description": tool.get("description").cloned().unwrap_or(Value::Null),
-        "parameters": normalize_chat_tool_parameters(tool.get("parameters").unwrap_or(&json!({})))
+        "name": name,
+        "description": response_tool_description(tool),
+        "parameters": normalize_chat_tool_parameters(
+            response_tool_parameters(tool).unwrap_or(&json!({}))
+        )
     });
     if let Some(strict) = tool.get("strict") {
+        function["strict"] = strict.clone();
+    } else if let Some(strict) = tool.pointer("/function/strict") {
         function["strict"] = strict.clone();
     }
     Some(json!({
@@ -3980,43 +4000,56 @@ fn namespace_tool_to_chat_tools(namespace_tool: &Value, context: &CodexToolConte
     };
     let mut converted = Vec::new();
     for child in children {
-        if child.get("type").and_then(Value::as_str) != Some("function") {
-            continue;
-        }
-        let Some(name) = child
-            .get("name")
-            .and_then(Value::as_str)
-            .filter(|v| !v.is_empty())
-        else {
-            continue;
-        };
-        let flat = flatten_namespace_tool_name(namespace, name);
-        if namespace != ""
-            && context
-                .function_tools
-                .get(&flat)
-                .is_some_and(|spec| spec.namespace.is_empty())
+        if response_tool_is_structured_function(child) {
+            let Some(name) = response_tool_name(child) else {
+                continue;
+            };
+            let flat = flatten_namespace_tool_name(namespace, name);
+            if namespace != ""
+                && context
+                    .function_tools
+                    .get(&flat)
+                    .is_some_and(|spec| spec.namespace.is_empty())
+            {
+                continue;
+            }
+            let description = combine_namespace_description(
+                namespace_description,
+                response_tool_description(child),
+            );
+            let mut function = json!({
+                "name": flat,
+                "parameters": normalize_chat_tool_parameters(
+                    response_tool_parameters(child).unwrap_or(&json!({}))
+                )
+            });
+            if !description.is_empty() {
+                function["description"] = json!(description);
+            }
+            if let Some(strict) = child
+                .get("strict")
+                .or_else(|| child.pointer("/function/strict"))
+            {
+                function["strict"] = strict.clone();
+            }
+            converted.push(json!({
+                "type": "function",
+                "function": function
+            }));
+        } else if let Some((upstream_name, openai_name)) =
+            response_tool_proxy_names(namespace, child)
         {
-            continue;
+            let description = combine_namespace_description(
+                namespace_description,
+                response_tool_description(child),
+            );
+            if detect_codex_custom_tool_kind(child, &openai_name) == CodexCustomToolKind::ApplyPatch
+            {
+                converted.extend(apply_patch_proxy_tools(&upstream_name, &description));
+            } else {
+                converted.push(generic_custom_proxy_tool(&upstream_name, &description));
+            }
         }
-        let description = combine_namespace_description(
-            namespace_description,
-            child
-                .get("description")
-                .and_then(Value::as_str)
-                .unwrap_or(""),
-        );
-        let mut function = json!({
-            "name": flat,
-            "parameters": normalize_chat_tool_parameters(child.get("parameters").unwrap_or(&json!({})))
-        });
-        if !description.is_empty() {
-            function["description"] = json!(description);
-        }
-        converted.push(json!({
-            "type": "function",
-            "function": function
-        }));
     }
     converted
 }
@@ -4282,6 +4315,58 @@ fn flatten_namespace_tool_name(namespace: &str, name: &str) -> String {
     }
 }
 
+fn response_tools_diagnostic_summary(tools: Option<&Value>) -> Value {
+    let Some(tools) = tools.and_then(Value::as_array) else {
+        return json!({
+            "present": tools.is_some(),
+            "count": 0,
+            "topLevelTypes": {},
+            "namespaceChildTypes": {}
+        });
+    };
+
+    let mut top_level_types = BTreeMap::<String, usize>::new();
+    let mut namespace_child_types = BTreeMap::<String, usize>::new();
+    let mut named_tool_count = 0usize;
+    let mut structured_tool_count = 0usize;
+    for tool in tools {
+        let tool_type = if tool.is_string() {
+            "string".to_string()
+        } else {
+            response_tool_type(tool).to_string()
+        };
+        *top_level_types.entry(tool_type).or_default() += 1;
+        if response_tool_name(tool).is_some() {
+            named_tool_count += 1;
+        }
+        if response_tool_is_structured_function(tool) {
+            structured_tool_count += 1;
+        }
+        if let Some(children) = tool.get("tools").and_then(Value::as_array) {
+            for child in children {
+                *namespace_child_types
+                    .entry(response_tool_type(child).to_string())
+                    .or_default() += 1;
+                if response_tool_name(child).is_some() {
+                    named_tool_count += 1;
+                }
+                if response_tool_is_structured_function(child) {
+                    structured_tool_count += 1;
+                }
+            }
+        }
+    }
+
+    json!({
+        "present": true,
+        "count": tools.len(),
+        "namedToolCount": named_tool_count,
+        "structuredToolCount": structured_tool_count,
+        "topLevelTypes": top_level_types,
+        "namespaceChildTypes": namespace_child_types
+    })
+}
+
 fn responses_tool_choice_to_chat(tool_choice: &Value, context: &CodexToolContext) -> Option<Value> {
     match tool_choice {
         Value::Object(object) if object.get("type").and_then(Value::as_str) == Some("function") => {
@@ -4312,17 +4397,31 @@ fn responses_tool_choice_to_chat(tool_choice: &Value, context: &CodexToolContext
                 }
             }))
         }
-        Value::Object(object) if object.get("type").and_then(Value::as_str) == Some("custom") => {
-            let name = object.get("name").and_then(Value::as_str)?;
-            let spec = context.custom_tools.get(name)?;
-            let upstream_name = if spec.kind == CodexCustomToolKind::ApplyPatch {
-                format!("{}_batch", spec.openai_name)
+        Value::Object(object) => {
+            let Some(name) = object.get("name").and_then(Value::as_str) else {
+                return Some(tool_choice.clone());
+            };
+            let namespace = object
+                .get("namespace")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let upstream_name = flatten_namespace_tool_name(namespace, name);
+            let lookup_name = if context.custom_tools.contains_key(&upstream_name) {
+                upstream_name
             } else {
-                spec.openai_name.clone()
+                name.to_string()
+            };
+            let Some(spec) = context.custom_tools.get(&lookup_name) else {
+                return Some(tool_choice.clone());
+            };
+            let selected_name = if spec.kind == CodexCustomToolKind::ApplyPatch {
+                format!("{}_batch", lookup_name)
+            } else {
+                lookup_name
             };
             Some(json!({
                 "type": "function",
-                "function": { "name": upstream_name }
+                "function": { "name": selected_name }
             }))
         }
         other => Some(other.clone()),
@@ -4472,7 +4571,8 @@ fn tool_call_added_item(
     tool_context: &CodexToolContext,
 ) -> Value {
     if tool_context.is_custom_tool_proxy(&state.name) {
-        return json!({
+        let (display_name, namespace) = tool_context.openai_name_for_custom_tool(&state.name);
+        let mut item = json!({
             "type": "response.output_item.added",
             "output_index": output_index,
             "item": {
@@ -4480,10 +4580,14 @@ fn tool_call_added_item(
                 "type": "custom_tool_call",
                 "status": "in_progress",
                 "call_id": state.call_id,
-                "name": tool_context.original_custom_tool_name(&state.name),
+                "name": display_name,
                 "input": ""
             }
         });
+        if !namespace.is_empty() {
+            item["item"]["namespace"] = json!(namespace);
+        }
+        return item;
     }
     let (display_name, namespace) = tool_context.openai_name_for_function_tool(&state.name);
     let mut item = json!({
@@ -4574,14 +4678,19 @@ fn response_tool_call_item(
     tool_context: &CodexToolContext,
 ) -> Value {
     if tool_context.is_custom_tool_proxy(name) {
-        return json!({
+        let (display_name, namespace) = tool_context.openai_name_for_custom_tool(name);
+        let mut item = json!({
             "id": format!("ctc_{call_id}"),
             "type": "custom_tool_call",
             "status": "completed",
             "call_id": call_id,
-            "name": tool_context.original_custom_tool_name(name),
+            "name": display_name,
             "input": reconstruct_custom_tool_call_input_with_context(tool_context, name, arguments)
         });
+        if !namespace.is_empty() {
+            item["namespace"] = json!(namespace);
+        }
+        return item;
     }
     let (display_name, namespace) = tool_context.openai_name_for_function_tool(name);
     let mut item = json!({
