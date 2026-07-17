@@ -8,3 +8,4 @@
 - 已修复 Responses 到 Chat Completions 的工具转换兼容性：保留新版具名工具，支持 `input_schema` / `inputSchema`，并兼容命名空间内的结构化、自定义和内置工具。
 - 已为代理诊断日志增加不含提示词、参数内容或密钥的工具形态摘要，便于 macOS 复测定位。
 - 验证完成：`cargo test -p codex-plus-core --test protocol_proxy` 通过 53 项；`cargo test -p codex-plus-core -- --test-threads=1` 全部通过。
+- 用户要求通过 GitHub Actions 构建并发布本次修复；计划发布补丁版本 `v1.2.48`，发行说明将明确说明 macOS 新版 Codex 工具声明兼容修复。
