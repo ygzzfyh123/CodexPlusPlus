@@ -9,3 +9,5 @@
 - 已为代理诊断日志增加不含提示词、参数内容或密钥的工具形态摘要，便于 macOS 复测定位。
 - 验证完成：`cargo test -p codex-plus-core --test protocol_proxy` 通过 53 项；`cargo test -p codex-plus-core -- --test-threads=1` 全部通过。
 - 用户要求通过 GitHub Actions 构建并发布本次修复；计划发布补丁版本 `v1.2.48`，发行说明将明确说明 macOS 新版 Codex 工具声明兼容修复。
+- 已发布 `v1.2.48`：GitHub Actions 运行 `29584792734` 已成功构建 Windows x64、macOS x64 和 macOS ARM64，并校验后上传六个安装包。
+- 已更新 GitHub Release 正文，明确记录 macOS 新版 Codex 工具定义被代理过滤的根因、兼容修复内容和测试结果。
