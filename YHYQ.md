@@ -80,3 +80,8 @@
 - 已核验 `v1.2.50` 正式 Release 包含六项上传完成且带 SHA-256 摘要的资产：Windows x64 setup/ZIP、macOS x64 DMG/ZIP、macOS ARM64 DMG/ZIP。
 - 已将自动生成的简略 Release 正文替换为完整中文说明，明确记录 ChatGPT 官网登录、官方 OAuth 本机回调、纯 API 混合迁移、官方手机远控、配对与设备撤销、安全边界和 GitHub Actions 构建验证。
 - 发布地址：`https://github.com/ygzzfyh123/CodexPPP/releases/tag/v1.2.50`。
+- 用户请求：为 ChatGPT 账号连接增加 Netscape Cookie 文本粘贴登录，以绕过当前浏览器登录流程。
+- 已确认用户示例再次包含可直接代表网页会话的 Session Cookie 和边缘防护凭据；不会记录其值，也不会实现 Cookie 导入、持久化或转换为 Codex 登录态。
+- 已核对 OpenAI 官方 app-server 文档、本机 Codex CLI 帮助和本机 `0.144.2` 协议 Schema，确认官方支持 `chatgptDeviceCode` 登录，可返回验证网址与一次性用户码，并继续通过 `account/login/completed` 通知完成登录。
+- 实现方向调整为新增“设备码登录”入口：不依赖本机浏览器回调，用户可在手机或其他设备打开官方验证页并输入一次性代码；完成后仍由 Codex 官方 app-server 保存和刷新登录态。
+- 用户没有要求本次上传 GitHub；本次修改、测试和提交只保留在本地分支。
