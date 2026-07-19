@@ -42,3 +42,5 @@
 - 已确认 Codex++ 现有“官方登录混入 API Key”模式正好具备所需双边界：ChatGPT token 保留在 `auth.json`，自定义 API Key 写入当前 provider 的 `experimental_bearer_token`。
 - 已审计旧提交 `bd8a5ef` 的自建手机中继方案；该方案后来已从正式管理器和设置模型移除，只留下未纳入 workspace 的实验应用和部分样式，不应作为本次官方 ChatGPT 手机远控的实现基础。
 - 已确定实现方向：新增官方手机远控面板，支持检测账号、发起 ChatGPT 登录、把当前纯 API 供应商迁移为官方登录混入 API、启动或停止官方 Remote Control，并生成短时手动配对码。
+- 用户追加任务：官方账号登录不能使用 Codex 专属登录网页，应尽量采用直接登录 ChatGPT 官网的体验，并将官方登录结果安全交给本地 Codex；在此基础上继续实现手机控制 Codex。
+- 已调整安全边界：不直接读取浏览器 Cookie 数据库或抓取任意网页令牌，优先定位并复用 OpenAI 官方桌面端或 app-server 的 ChatGPT 登录与本地 token 交换流程。
