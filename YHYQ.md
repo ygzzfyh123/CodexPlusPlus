@@ -69,3 +69,7 @@
 - 已确认 `release-assets.yml` 会校验版本与本地品牌，并通过 GitHub Actions 构建 Windows x64、macOS x64、macOS ARM64 共六个安装资产后发布 Release。
 - 已将发布版本统一提升到 `1.2.50`，同步更新 Rust workspace、四个 workspace package 的 Cargo.lock、前端 package、package-lock、Tauri 配置和更新日志。
 - `1.2.50` 更新日志已明确记录 ChatGPT 官网登录、本地 OAuth 回调、纯 API 到官方混合模式迁移、官方手机远控、配对和设备撤销，以及不读取或导入浏览器 Cookie 的安全边界。
+- 发布前完整验证通过：`cargo test --workspace -- --test-threads=1`、前端 TypeScript 检查、11 项前端测试、Vite 生产构建、`cargo fmt --all -- --check`、`git diff --check` 和本地品牌保护均通过。
+- 已再次确认本项目没有残留的 Vite、npm preview 或常用预览端口监听；当前仅有 Codex 自身的工具运行时进程。
+- 已核对 Rust workspace、前端 package 和 Tauri 配置版本均为 `1.2.50`，远端 `main` 是当前发布分支的祖先，可直接快进推送。
+- 已确认 GitHub 远端不存在 `v1.2.50` 标签或 Release；发布工作流仍会构建 Windows x64、macOS x64 和 macOS ARM64，并在六项资产完整后创建发行版。
