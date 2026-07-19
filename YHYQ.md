@@ -73,3 +73,10 @@
 - 已再次确认本项目没有残留的 Vite、npm preview 或常用预览端口监听；当前仅有 Codex 自身的工具运行时进程。
 - 已核对 Rust workspace、前端 package 和 Tauri 配置版本均为 `1.2.50`，远端 `main` 是当前发布分支的祖先，可直接快进推送。
 - 已确认 GitHub 远端不存在 `v1.2.50` 标签或 Release；发布工作流仍会构建 Windows x64、macOS x64 和 macOS ARM64，并在六项资产完整后创建发行版。
+- 已将发布提交 `5537f5f` 快进推送到 `codexppp/main`，并创建、推送 `v1.2.50` 标签。
+- 标签推送没有自动生成 Actions 运行，已手动触发 `release-assets.yml`；首次运行 `29694846142` 的代码编译、macOS x64 打包和结构校验均已通过，但 GitHub ArtifactService 在创建 macOS x64 工件时连续五次请求超时，导致发布任务被跳过。
+- 对首次运行执行“仅重跑失败任务”后，GitHub 将其显示为排队但没有生成任何 job；取消、强制取消和删除接口分别返回状态冲突或权限拒绝，因此停止继续调用该异常记录。
+- 已重新手动触发独立发布运行 `29695395855`，版本与品牌校验、Windows x64、macOS x64、macOS ARM64、macOS 应用结构校验和最终 GitHub Release 发布任务全部成功。
+- 已核验 `v1.2.50` 正式 Release 包含六项上传完成且带 SHA-256 摘要的资产：Windows x64 setup/ZIP、macOS x64 DMG/ZIP、macOS ARM64 DMG/ZIP。
+- 已将自动生成的简略 Release 正文替换为完整中文说明，明确记录 ChatGPT 官网登录、官方 OAuth 本机回调、纯 API 混合迁移、官方手机远控、配对与设备撤销、安全边界和 GitHub Actions 构建验证。
+- 发布地址：`https://github.com/ygzzfyh123/CodexPPP/releases/tag/v1.2.50`。
