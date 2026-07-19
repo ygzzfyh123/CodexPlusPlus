@@ -515,8 +515,7 @@ impl AppServerClient {
                 "account/login/start",
                 Some(json!({
                     "type": "chatgpt",
-                    "codexStreamlinedLogin": true,
-                    "useHostedLoginSuccessPage": true,
+                    "useHostedLoginSuccessPage": false,
                     "appBrand": "chatgpt"
                 })),
             )
@@ -775,13 +774,33 @@ fn required_string(value: &Value, key: &str) -> anyhow::Result<String> {
 }
 
 fn sanitize_server_message(message: &str) -> String {
-    message
+    let normalized = message
         .chars()
         .filter(|character| !character.is_control() || *character == '\n')
         .take(400)
         .collect::<String>()
         .trim()
-        .to_string()
+        .to_string();
+    normalized
+        .split_whitespace()
+        .map(|part| {
+            let lower = part.to_ascii_lowercase();
+            if part.len() > 160
+                || part.starts_with("eyJ")
+                || part.starts_with("sk-")
+                || lower.contains("access_token")
+                || lower.contains("refresh_token")
+                || lower.contains("session-token")
+            {
+                return "[redacted]".to_string();
+            }
+            if part.starts_with("https://") || part.starts_with("http://") {
+                return part.split('?').next().unwrap_or(part).to_string();
+            }
+            part.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn read_optional_bytes(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
@@ -883,5 +902,18 @@ mod tests {
             "{\"auth_mode\":\"apikey\"}\n"
         );
         assert_eq!(store.load().unwrap().active_relay_id, "before");
+    }
+
+    #[test]
+    fn server_error_sanitization_removes_url_queries_and_token_like_values() {
+        let sanitized = sanitize_server_message(
+            "login failed https://auth.openai.com/oauth?code=secret eyJabcdefghijklmnopqrstuvwxyz",
+        );
+
+        assert_eq!(
+            sanitized,
+            "login failed https://auth.openai.com/oauth [redacted]"
+        );
+        assert!(!sanitized.contains("secret"));
     }
 }

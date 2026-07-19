@@ -34,6 +34,8 @@ import {
   KeyRound,
   Languages,
   LayoutDashboard,
+  Link2,
+  LogIn,
   MessageCircle,
   FileCode2,
   Moon,
@@ -47,11 +49,14 @@ import {
   Settings,
   ShieldCheck,
   ShieldAlert,
+  Smartphone,
   Stethoscope,
   Sun,
   TestTube,
   Trash2,
+  Unplug,
   Upload,
+  UserRoundCheck,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -338,6 +343,52 @@ type RelayResult = CommandResult<{
 }>;
 
 type RelayPayload = Omit<RelayResult, "status" | "message">;
+
+type ChatGptLoginStartResult = CommandResult<{
+  loginId: string;
+  authUrl: string;
+  chatgptUrl: string;
+}>;
+
+type ChatGptLoginProgressResult = CommandResult<{
+  loginId: string | null;
+  state: "idle" | "pending" | "succeeded" | "failed" | "canceled" | string;
+  settings: BackendSettings | null;
+}>;
+
+type RemoteControlClient = {
+  clientId: string;
+  displayName: string | null;
+  deviceType: string | null;
+  platform: string | null;
+  osVersion: string | null;
+  deviceModel: string | null;
+  appVersion: string | null;
+  lastSeenAt: number | null;
+};
+
+type RemoteControlResult = CommandResult<{
+  accountType: string;
+  accountLabel: string | null;
+  planType: string | null;
+  requiresOpenaiAuth: boolean;
+  status: string;
+  serverName: string;
+  installationId: string;
+  environmentId: string | null;
+  clients: RemoteControlClient[];
+}>;
+
+type RemoteControlPairingResult = CommandResult<{
+  pairingCode: string;
+  manualPairingCode: string | null;
+  environmentId: string;
+  expiresAt: number;
+}>;
+
+type RemotePairingStatusResult = CommandResult<{
+  claimed: boolean;
+}>;
 
 type RelayFilesResult = CommandResult<{
   configPath: string;
@@ -718,12 +769,13 @@ type StartupResult = CommandResult<{
   showUpdate: boolean;
 }>;
 
-type Route = "overview" | "relay" | "relayEnvironment" | "sessions" | "context" | "enhance" | "zedRemote" | "userScripts" | "recommendations" | "maintenance" | "about" | "settings";
+type Route = "overview" | "relay" | "remoteControl" | "relayEnvironment" | "sessions" | "context" | "enhance" | "zedRemote" | "userScripts" | "recommendations" | "maintenance" | "about" | "settings";
 type Theme = "dark" | "light";
 
 const routes: Array<{ id: Route; label: string; icon: LucideIcon; badge?: string }> = [
   { id: "overview", label: t("概览"), icon: LayoutDashboard },
   { id: "relay", label: t("供应商配置"), icon: KeyRound },
+  { id: "remoteControl", label: t("手机远控"), icon: Smartphone },
   { id: "sessions", label: t("会话管理"), icon: MessageCircle },
   { id: "context", label: t("工具与插件"), icon: Network },
   { id: "enhance", label: t("Codex增强"), icon: Hammer },
@@ -842,6 +894,10 @@ export function App() {
   const [settings, setSettings] = useState<SettingsResult | null>(null);
   const [relay, setRelay] = useState<RelayResult | null>(null);
   const [relayFiles, setRelayFiles] = useState<RelayFilesResult | null>(null);
+  const [officialRemote, setOfficialRemote] = useState<RemoteControlResult | null>(null);
+  const [officialRemoteBusy, setOfficialRemoteBusy] = useState(false);
+  const [pendingChatGptLoginId, setPendingChatGptLoginId] = useState("");
+  const [remotePairing, setRemotePairing] = useState<RemoteControlPairingResult | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflictsResult | null>(null);
   const [relayEnvironment, setRelayEnvironment] = useState<RelayEnvironmentResult | null>(null);
   const [ccsProviders, setCcsProviders] = useState<CcsProvidersResult | null>(null);
@@ -987,6 +1043,17 @@ export function App() {
     if (result) {
       setRelayFiles(result);
       if (!silent) showResultNotice(t("配置文件"), result, { silentSuccess: true });
+    }
+    return result;
+  };
+
+  const refreshOfficialRemote = async (silent = false) => {
+    const result = await run(() => call<RemoteControlResult>("official_remote_control_status"));
+    if (result) {
+      setOfficialRemote(result);
+      if (!silent || !isSuccessStatus(result.status)) {
+        showResultNotice(t("手机远控"), result, { silentSuccess: true });
+      }
     }
     return result;
   };
@@ -1253,6 +1320,11 @@ export function App() {
       await refreshCcsProviders(true);
     }
     if (next === "relayEnvironment") await refreshRelayEnvironment(true);
+    if (next === "remoteControl") {
+      await refreshSettings(true);
+      await refreshRelay(true);
+      await refreshOfficialRemote(true);
+    }
     if (next === "sessions") {
       await refreshSettings(true);
       await refreshLocalSessions(true);
@@ -2036,6 +2108,185 @@ export function App() {
     showNotice(title, result.message, result.status);
   };
 
+  const openChatGptWebsite = async () => {
+    await openExternalUrl("https://chatgpt.com/");
+  };
+
+  const startChatGptWebLogin = async () => {
+    if (officialRemoteBusy || pendingChatGptLoginId) return;
+    setOfficialRemoteBusy(true);
+    try {
+      const result = await run(() => call<ChatGptLoginStartResult>("chatgpt_web_login_start"));
+      if (!result) return;
+      if (!isSuccessStatus(result.status) || !result.loginId || !result.authUrl) {
+        showResultNotice(t("ChatGPT 登录"), result);
+        return;
+      }
+      setPendingChatGptLoginId(result.loginId);
+      await openExternalUrl(result.authUrl);
+      showNotice(t("ChatGPT 登录"), t("请在浏览器中完成登录，管理器会自动接收结果。"), "accepted");
+    } finally {
+      setOfficialRemoteBusy(false);
+    }
+  };
+
+  const cancelChatGptWebLogin = async () => {
+    if (!pendingChatGptLoginId) return;
+    setOfficialRemoteBusy(true);
+    try {
+      const result = await run(() =>
+        call<ChatGptLoginProgressResult>("chatgpt_web_login_cancel", {
+          loginId: pendingChatGptLoginId,
+        }),
+      );
+      if (result) {
+        setPendingChatGptLoginId("");
+        showResultNotice(t("ChatGPT 登录"), result);
+        await refreshSettings(true);
+        await refreshRelay(true);
+      }
+    } finally {
+      setOfficialRemoteBusy(false);
+    }
+  };
+
+  const runOfficialRemoteSnapshotCommand = async (command: string) => {
+    if (officialRemoteBusy) return null;
+    setOfficialRemoteBusy(true);
+    try {
+      const result = await run(() => call<RemoteControlResult>(command));
+      if (result) {
+        setOfficialRemote(result);
+        showResultNotice(t("手机远控"), result);
+      }
+      return result;
+    } finally {
+      setOfficialRemoteBusy(false);
+    }
+  };
+
+  const enableOfficialRemote = async () => {
+    await runOfficialRemoteSnapshotCommand("official_remote_control_enable");
+  };
+
+  const disableOfficialRemote = async () => {
+    const result = await runOfficialRemoteSnapshotCommand("official_remote_control_disable");
+    if (result && isSuccessStatus(result.status)) setRemotePairing(null);
+  };
+
+  const startOfficialRemotePairing = async () => {
+    if (officialRemoteBusy) return;
+    setOfficialRemoteBusy(true);
+    try {
+      const result = await run(() =>
+        call<RemoteControlPairingResult>("official_remote_control_pairing_start"),
+      );
+      if (result) {
+        if (isSuccessStatus(result.status)) setRemotePairing(result);
+        showResultNotice(t("手机配对"), result, { silentSuccess: true });
+      }
+    } finally {
+      setOfficialRemoteBusy(false);
+    }
+  };
+
+  const revokeOfficialRemoteClient = async (client: RemoteControlClient) => {
+    const environmentId = officialRemote?.environmentId;
+    if (!environmentId) return;
+    const label = remoteClientLabel(client);
+    if (!window.confirm(tf("撤销设备“{0}”？该设备之后需要重新配对。", [label]))) return;
+    setOfficialRemoteBusy(true);
+    try {
+      const result = await run(() =>
+        call<RemoteControlResult>("official_remote_control_revoke_client", {
+          request: { environmentId, clientId: client.clientId },
+        }),
+      );
+      if (result) {
+        setOfficialRemote(result);
+        showResultNotice(t("设备撤销"), result);
+      }
+    } finally {
+      setOfficialRemoteBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!pendingChatGptLoginId) return;
+    let disposed = false;
+    let inFlight = false;
+    const poll = async () => {
+      if (disposed || inFlight) return;
+      inFlight = true;
+      try {
+        const result = await run(() =>
+          call<ChatGptLoginProgressResult>("chatgpt_web_login_status", {
+            loginId: pendingChatGptLoginId,
+          }),
+        );
+        if (!result || disposed) return;
+        if (!isSuccessStatus(result.status)) {
+          setPendingChatGptLoginId("");
+          showResultNotice(t("ChatGPT 登录"), result);
+          return;
+        }
+        if (result.state === "pending") return;
+        setPendingChatGptLoginId("");
+        showResultNotice(t("ChatGPT 登录"), result);
+        if (result.state === "succeeded") {
+          await refreshSettings(true);
+          await refreshRelay(true);
+          await refreshOfficialRemote(true);
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1200);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [pendingChatGptLoginId]);
+
+  useEffect(() => {
+    if (!remotePairing?.pairingCode) return;
+    let disposed = false;
+    let inFlight = false;
+    const poll = async () => {
+      if (disposed || inFlight) return;
+      if (normalizedRemoteTimestamp(remotePairing.expiresAt) <= Date.now()) {
+        setRemotePairing(null);
+        showNotice(t("手机配对"), t("配对码已过期，请重新生成。"), "failed");
+        return;
+      }
+      inFlight = true;
+      try {
+        const result = await run(() =>
+          call<RemotePairingStatusResult>("official_remote_control_pairing_status", {
+            request: {
+              pairingCode: remotePairing.pairingCode,
+              manualPairingCode: remotePairing.manualPairingCode,
+            },
+          }),
+        );
+        if (result?.claimed && !disposed) {
+          setRemotePairing(null);
+          showNotice(t("手机配对"), t("手机已完成配对。"), "ok");
+          await refreshOfficialRemote(true);
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 1500);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [remotePairing?.pairingCode, remotePairing?.manualPairingCode, remotePairing?.expiresAt]);
+
   useEffect(() => {
     void (async () => {
       const startup = await run(() => call<StartupResult>("startup_options"));
@@ -2193,6 +2444,7 @@ export function App() {
       },
       refreshRelay,
       refreshRelayFiles,
+      refreshOfficialRemote,
       refreshEnvConflicts,
       refreshRelayEnvironment,
       removeEnvConflicts,
@@ -2212,6 +2464,13 @@ export function App() {
       openZedRemoteProject,
       forgetZedRemoteProject,
       openExternalUrl,
+      openChatGptWebsite,
+      startChatGptWebLogin,
+      cancelChatGptWebLogin,
+      enableOfficialRemote,
+      disableOfficialRemote,
+      startOfficialRemotePairing,
+      revokeOfficialRemoteClient,
       applyRelayInjection,
       applyPureApiInjection,
       clearRelayInjection,
@@ -2246,7 +2505,7 @@ export function App() {
       disableWatcher: () => watcherAction("disable_watcher"),
       toggleTheme: () => setTheme((current) => (current === "dark" ? "light" : "dark")),
     }),
-    [route, launchForm, settingsForm, settings, removeOwnedData, update, updateInstallProgress.active, logs, diagnostics, theme, relayFiles, localSessions, zedRemoteProjects, selectedProviderSyncTarget, envConflicts, relayEnvironment, ccsProviders],
+    [route, launchForm, settingsForm, settings, removeOwnedData, update, updateInstallProgress.active, logs, diagnostics, theme, relayFiles, localSessions, zedRemoteProjects, selectedProviderSyncTarget, envConflicts, relayEnvironment, ccsProviders, officialRemote, officialRemoteBusy, pendingChatGptLoginId, remotePairing],
   );
   const hasUpdate = update?.updateAvailable === true;
 
@@ -2349,6 +2608,15 @@ export function App() {
           ) : null}
           {route === "relayEnvironment" ? (
             <RelayEnvironmentScreen result={relayEnvironment} actions={actions} />
+          ) : null}
+          {route === "remoteControl" ? (
+            <RemoteControlScreen
+              remote={officialRemote}
+              pairing={remotePairing}
+              pendingLoginId={pendingChatGptLoginId}
+              busy={officialRemoteBusy}
+              actions={actions}
+            />
           ) : null}
           {route === "sessions" ? (
             <SessionsScreen
@@ -2486,6 +2754,7 @@ type Actions = {
   setLaunchMode: (launchMode: LaunchMode) => Promise<void>;
   refreshRelay: () => Promise<void>;
   refreshRelayFiles: () => Promise<RelayFilesResult | null>;
+  refreshOfficialRemote: (silent?: boolean) => Promise<RemoteControlResult | null>;
   refreshEnvConflicts: (silent?: boolean) => Promise<EnvConflictsResult | null>;
   refreshRelayEnvironment: (silent?: boolean) => Promise<RelayEnvironmentResult | null>;
   removeEnvConflicts: (names: string[]) => Promise<void>;
@@ -2505,6 +2774,13 @@ type Actions = {
   openZedRemoteProject: (project: ZedRemoteProject, strategy?: ZedOpenStrategy) => Promise<void>;
   forgetZedRemoteProject: (project: ZedRemoteProject) => Promise<void>;
   openExternalUrl: (url: string) => Promise<void>;
+  openChatGptWebsite: () => Promise<void>;
+  startChatGptWebLogin: () => Promise<void>;
+  cancelChatGptWebLogin: () => Promise<void>;
+  enableOfficialRemote: () => Promise<void>;
+  disableOfficialRemote: () => Promise<void>;
+  startOfficialRemotePairing: () => Promise<void>;
+  revokeOfficialRemoteClient: (client: RemoteControlClient) => Promise<void>;
   applyRelayInjection: () => Promise<boolean>;
   applyPureApiInjection: () => Promise<boolean>;
   clearRelayInjection: () => Promise<boolean>;
@@ -2604,6 +2880,208 @@ function OverviewScreen({
               {t("打开关于")}
             </Button>
           </Toolbar>
+        </CardContent>
+      </Panel>
+    </>
+  );
+}
+
+function RemoteControlScreen({
+  remote,
+  pairing,
+  pendingLoginId,
+  busy,
+  actions,
+}: {
+  remote: RemoteControlResult | null;
+  pairing: RemoteControlPairingResult | null;
+  pendingLoginId: string;
+  busy: boolean;
+  actions: Actions;
+}) {
+  const signedIn = remote?.accountType === "chatgpt";
+  const connected = remote?.status === "connected";
+  const status = remote?.status || "disabled";
+  const accountLabel =
+    remote?.accountLabel || (signedIn ? t("ChatGPT 账号") : t("尚未连接 ChatGPT 账号"));
+  const copyPairingCode = async () => {
+    const code = pairing?.manualPairingCode || pairing?.pairingCode;
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      await actions.showMessage(t("手机配对"), t("配对码已复制。"), "ok");
+    } catch (error) {
+      await actions.showMessage(t("复制失败"), stringifyError(error), "failed");
+    }
+  };
+
+  return (
+    <>
+      <Panel className="remote-account-panel">
+        <CardHead
+          title={t("ChatGPT 账号连接")}
+          detail={t("先登录 ChatGPT 官网，再将同一账号安全连接到本机 Codex")}
+        />
+        <CardContent className="remote-account-content">
+          <div className="remote-account-summary">
+            <span className={`remote-account-icon ${signedIn ? "connected" : ""}`}>
+              {signedIn ? <UserRoundCheck className="h-5 w-5" /> : <LogIn className="h-5 w-5" />}
+            </span>
+            <div>
+              <strong>{accountLabel}</strong>
+              <small>
+                {signedIn
+                  ? tf("ChatGPT 套餐：{0}", [remote?.planType || t("未知")])
+                  : t("不会读取、导入或保存浏览器 Cookie")}
+              </small>
+            </div>
+            <Badge status={signedIn ? "ok" : "not_checked"} />
+          </div>
+          <Toolbar>
+            <Button onClick={() => void actions.openChatGptWebsite()} variant="outline">
+              <ExternalLink className="h-4 w-4" />
+              {t("打开 ChatGPT 官网")}
+            </Button>
+            {pendingLoginId ? (
+              <Button disabled={busy} onClick={() => void actions.cancelChatGptWebLogin()} variant="outline">
+                <Unplug className="h-4 w-4" />
+                {t("取消连接")}
+              </Button>
+            ) : (
+              <Button disabled={busy} onClick={() => void actions.startChatGptWebLogin()}>
+                <Link2 className="h-4 w-4" />
+                {signedIn ? t("重新连接账号") : t("连接本机 Codex")}
+              </Button>
+            )}
+          </Toolbar>
+          {pendingLoginId ? (
+            <div className="remote-inline-status">
+              <RefreshCw className="h-4 w-4 remote-spin" />
+              <span>{t("正在等待浏览器完成 ChatGPT 登录")}</span>
+            </div>
+          ) : null}
+        </CardContent>
+      </Panel>
+
+      <div className="grid two remote-control-grid">
+        <Panel>
+          <CardHead title={t("远控连接")} detail={t("由 OpenAI 官方 Remote Control 服务维护")} />
+          <CardContent>
+            <div className="remote-status-block">
+              <div className="remote-status-primary">
+                <span className={`remote-status-indicator ${status}`} />
+                <div>
+                  <strong>{remoteControlStatusLabel(status)}</strong>
+                  <small>{remote?.serverName || t("尚未创建远控主机")}</small>
+                </div>
+              </div>
+              <Badge status={connected ? "ok" : status} />
+            </div>
+            <div className="relay-grid compact remote-id-grid">
+              <div>
+                <span>{t("安装标识")}</span>
+                <code>{shortRemoteId(remote?.installationId)}</code>
+              </div>
+              <div>
+                <span>{t("环境标识")}</span>
+                <code>{shortRemoteId(remote?.environmentId)}</code>
+              </div>
+            </div>
+            <Toolbar>
+              {connected ? (
+                <Button disabled={busy} onClick={() => void actions.disableOfficialRemote()} variant="outline">
+                  <PowerOff className="h-4 w-4" />
+                  {t("关闭远控")}
+                </Button>
+              ) : (
+                <Button disabled={busy || !signedIn} onClick={() => void actions.enableOfficialRemote()}>
+                  <Power className="h-4 w-4" />
+                  {t("启用远控")}
+                </Button>
+              )}
+              <Button
+                disabled={busy}
+                onClick={() => void actions.refreshOfficialRemote()}
+                size="icon"
+                title={t("刷新状态")}
+                variant="outline"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+            </Toolbar>
+          </CardContent>
+        </Panel>
+
+        <Panel>
+          <CardHead title={t("手机配对")} detail={t("在手机 ChatGPT 应用中输入短时配对码")} />
+          <CardContent>
+            {pairing ? (
+              <div className="remote-pairing-active">
+                <span>{t("手动配对码")}</span>
+                <button
+                  className="remote-pairing-code"
+                  onClick={() => void copyPairingCode()}
+                  title={t("复制配对码")}
+                  type="button"
+                >
+                  {pairing.manualPairingCode || pairing.pairingCode}
+                  <Copy className="h-4 w-4" />
+                </button>
+                <small>{tf("有效期至 {0}", [formatRemoteTimestamp(pairing.expiresAt)])}</small>
+              </div>
+            ) : (
+              <div className="remote-pairing-empty">
+                <Smartphone className="h-6 w-6" />
+                <span>{connected ? t("可以生成新的手机配对码") : t("启用远控后可生成配对码")}</span>
+              </div>
+            )}
+            <Toolbar>
+              <Button
+                disabled={busy || !connected}
+                onClick={() => void actions.startOfficialRemotePairing()}
+                variant="secondary"
+              >
+                <Smartphone className="h-4 w-4" />
+                {pairing ? t("重新生成") : t("生成配对码")}
+              </Button>
+            </Toolbar>
+          </CardContent>
+        </Panel>
+      </div>
+
+      <Panel>
+        <CardHead
+          title={t("已连接设备")}
+          detail={tf("{0} 台设备可访问此 Codex 主机", [remote?.clients.length ?? 0])}
+        />
+        <CardContent>
+          {remote?.clients.length ? (
+            <div className="remote-client-list">
+              {remote.clients.map((client) => (
+                <div className="remote-client-row" key={client.clientId}>
+                  <span className="remote-client-icon">
+                    <Smartphone className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <strong>{remoteClientLabel(client)}</strong>
+                    <small>{remoteClientDetail(client)}</small>
+                  </div>
+                  <span className="remote-client-seen">{formatRemoteTimestamp(client.lastSeenAt)}</span>
+                  <Button
+                    disabled={busy}
+                    onClick={() => void actions.revokeOfficialRemoteClient(client)}
+                    size="icon"
+                    title={t("撤销设备")}
+                    variant="outline"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty">{t("尚无已连接设备。")}</div>
+          )}
         </CardContent>
       </Panel>
     </>
@@ -6020,6 +6498,7 @@ function routeSubtitle(route: Route) {
   const subtitles: Record<Route, string> = {
     overview: t("检查问题、启动与快速修复"),
     relay: t("管理 API 供应商、协议、Key 与配置文件"),
+    remoteControl: t("连接 ChatGPT 账号并管理官方手机远控"),
     relayEnvironment: t("排查可能干扰中转站配置的本机环境"),
     sessions: t("查看、删除和修复 Codex 本地会话"),
     context: t("独立管理 MCP、Skills、Plugins"),
@@ -7876,6 +8355,45 @@ function zedRemoteSourceLabel(source: string) {
 function formatTime(value: number) {
   if (!value) return "-";
   return new Date(value).toLocaleString("zh-CN");
+}
+
+function normalizedRemoteTimestamp(value: number | null | undefined) {
+  if (!value) return 0;
+  return value < 10_000_000_000 ? value * 1000 : value;
+}
+
+function formatRemoteTimestamp(value: number | null | undefined) {
+  const timestamp = normalizedRemoteTimestamp(value);
+  return timestamp ? new Date(timestamp).toLocaleString(getLanguage() === "en" ? "en-US" : "zh-CN") : "-";
+}
+
+function remoteControlStatusLabel(status: string) {
+  if (status === "connected") return t("已连接");
+  if (status === "connecting") return t("正在连接");
+  if (status === "errored") return t("连接异常");
+  return t("已关闭");
+}
+
+function shortRemoteId(value: string | null | undefined) {
+  const normalized = value?.trim() || "";
+  if (!normalized) return "-";
+  if (normalized.length <= 18) return normalized;
+  return `${normalized.slice(0, 8)}…${normalized.slice(-6)}`;
+}
+
+function remoteClientLabel(client: RemoteControlClient) {
+  return client.displayName || client.deviceModel || client.deviceType || t("未命名设备");
+}
+
+function remoteClientDetail(client: RemoteControlClient) {
+  return [
+    client.platform,
+    client.osVersion,
+    client.deviceModel,
+    client.appVersion ? `ChatGPT ${client.appVersion}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ") || t("暂无设备详情");
 }
 
 function formatDuration(startedAtMs: number): string {

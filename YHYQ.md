@@ -47,3 +47,15 @@
 - 用户进一步明确希望先在 `chatgpt.com` 完成普通 ChatGPT 登录，并提出手工粘贴 Netscape Cookie 文件作为备选。
 - 已确认用户提供的示例包含可直接代表网页会话的敏感凭据；不会将其写入代码、日志或工作记录，也不会实现解析、保存或转换 ChatGPT 会话 Cookie 的登录方式。
 - 实现方案调整为：先打开 `chatgpt.com` 让用户完成普通网页登录，再复用同一浏览器会话发起官方本地 OAuth 令牌交换；该流程不读取浏览器 Cookie，也不要求用户向 Codex++ 粘贴账号会话密钥。
+- 已新增 `official_remote` 核心模块，通过长期存活的 Codex app-server stdio JSON-RPC 会话实现账号登录与官方 Remote Control 管理。
+- ChatGPT 登录使用 `appBrand = "chatgpt"`，关闭托管成功页并使用本地回调；管理器提供“打开 ChatGPT 官网”和“连接本机 Codex”两个明确步骤，不读取或导入浏览器 Cookie。
+- 已实现登录发起、完成状态轮询和取消操作；登录前备份 `config.toml`、`auth.json` 和供应商设置，失败、取消或迁移异常时自动恢复。
+- 已实现纯 API 单供应商到官方混合模式的事务迁移：保留 ChatGPT token 于 `auth.json`，保留自定义 API Key 于当前 provider 的 `experimental_bearer_token`，并将 profile 更新为 `Official + official_mix_api_key`。
+- 已拒绝聚合供应商和自定义多模型供应商的自动迁移，避免无法可靠恢复复杂路由时覆盖现有配置。
+- 已实现官方手机远控状态读取、启用、关闭、短时手动配对码、配对状态轮询、设备列表和设备撤销。
+- 已新增管理器“手机远控”页面，展示 ChatGPT 账号、套餐、远控主机状态、安装/环境标识、配对码和已连接设备，并补齐中英文文案与窄屏布局。
+- 已为 app-server 错误增加 URL 查询参数、token 关键词和超长片段脱敏，管理器响应和诊断日志不返回访问令牌、刷新令牌或 Cookie。
+- 已验证本机 Codex app-server 的 ChatGPT 品牌登录地址为 OpenAI 官方 OAuth，关闭托管成功页后回调地址为本机环回地址。
+- 专项验证通过：3 项 `official_remote` Rust 测试、管理器 `cargo check`、前端 TypeScript 检查、11 项前端测试和 Vite 生产构建。
+- 已完成页面视觉检查：桌面端 `1280x720` 无横向溢出，窄屏 `390x844` 的 DOM 尺寸检查无文字裁切或控件重叠；普通浏览器缺少 Tauri bridge 时仅会出现预期的 invoke 测试提示。
+- 已扫描仓库，确认用户提供的 Cookie 值和会话凭据未写入代码、日志或工作记录。

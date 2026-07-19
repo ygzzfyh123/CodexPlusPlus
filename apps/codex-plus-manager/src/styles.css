@@ -654,6 +654,211 @@ body {
   text-align: center;
 }
 
+.remote-account-content {
+  display: grid;
+  gap: 12px;
+}
+
+.remote-account-summary {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.remote-account-summary > div,
+.remote-status-primary > div,
+.remote-client-row > div {
+  min-width: 0;
+}
+
+.remote-account-summary strong,
+.remote-account-summary small,
+.remote-status-primary strong,
+.remote-status-primary small,
+.remote-client-row strong,
+.remote-client-row small {
+  display: block;
+}
+
+.remote-account-summary small,
+.remote-status-primary small,
+.remote-client-row small,
+.remote-client-seen,
+.remote-pairing-active small {
+  margin-top: 3px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.remote-account-icon,
+.remote-client-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--muted) / 0.35);
+  color: hsl(var(--muted-foreground));
+}
+
+.remote-account-icon.connected {
+  border-color: hsl(var(--status-success) / 0.4);
+  background: hsl(var(--status-success) / 0.12);
+  color: hsl(var(--status-success));
+}
+
+.remote-inline-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid hsl(var(--primary) / 0.3);
+  border-radius: 8px;
+  background: hsl(var(--primary) / 0.08);
+  color: hsl(var(--foreground));
+  padding: 8px 10px;
+}
+
+.remote-spin {
+  flex: 0 0 auto;
+  animation: spin 850ms linear infinite;
+}
+
+.remote-control-grid .panel {
+  min-width: 0;
+}
+
+.remote-status-block,
+.remote-status-primary {
+  display: flex;
+  align-items: center;
+}
+
+.remote-status-block {
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+}
+
+.remote-status-primary {
+  min-width: 0;
+  gap: 10px;
+}
+
+.remote-status-indicator {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: hsl(var(--muted-foreground));
+  box-shadow: 0 0 0 4px hsl(var(--muted) / 0.45);
+}
+
+.remote-status-indicator.connected {
+  background: hsl(var(--status-success));
+  box-shadow: 0 0 0 4px hsl(var(--status-success) / 0.14);
+}
+
+.remote-status-indicator.connecting {
+  background: hsl(var(--brand-accent));
+  box-shadow: 0 0 0 4px hsl(var(--brand-accent) / 0.14);
+}
+
+.remote-status-indicator.errored {
+  background: hsl(var(--destructive));
+  box-shadow: 0 0 0 4px hsl(var(--destructive) / 0.14);
+}
+
+.remote-id-grid code {
+  min-width: 0;
+  overflow: hidden;
+  color: hsl(var(--muted-foreground));
+  font-family: Consolas, "SFMono-Regular", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-pairing-active,
+.remote-pairing-empty {
+  display: grid;
+  align-content: center;
+  min-height: 112px;
+}
+
+.remote-pairing-active {
+  gap: 7px;
+}
+
+.remote-pairing-active > span {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+
+.remote-pairing-code {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid hsl(var(--primary) / 0.4);
+  border-radius: 8px;
+  background: hsl(var(--primary) / 0.08);
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0;
+  padding: 8px 12px;
+}
+
+.remote-pairing-code:hover,
+.remote-pairing-code:focus-visible {
+  border-color: hsl(var(--primary) / 0.72);
+  outline: none;
+}
+
+.remote-pairing-empty {
+  place-items: center;
+  gap: 8px;
+  color: hsl(var(--muted-foreground));
+  text-align: center;
+}
+
+.remote-client-list {
+  display: grid;
+  gap: 8px;
+}
+
+.remote-client-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) minmax(140px, auto) 36px;
+  gap: 10px;
+  align-items: center;
+  min-height: 58px;
+  border-bottom: 1px solid hsl(var(--border));
+  padding: 7px 0;
+}
+
+.remote-client-row:last-child {
+  border-bottom: 0;
+}
+
+.remote-client-icon {
+  width: 36px;
+  height: 36px;
+}
+
+.remote-client-seen {
+  margin: 0;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .relay-profile-list {
   display: grid;
   gap: 10px;
@@ -3279,6 +3484,23 @@ body {
   .feature-action-row button,
   .feature-action-status {
     width: fit-content;
+  }
+
+  .remote-account-summary {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .remote-account-summary > .inline-flex {
+    grid-column: 2;
+  }
+
+  .remote-client-row {
+    grid-template-columns: 36px minmax(0, 1fr) 36px;
+  }
+
+  .remote-client-seen {
+    grid-column: 2;
+    text-align: left;
   }
 }
 
