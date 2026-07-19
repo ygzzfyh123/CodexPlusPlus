@@ -2011,6 +2011,40 @@ pub async fn chatgpt_web_login_start()
 }
 
 #[tauri::command]
+pub async fn chatgpt_device_login_start()
+-> CommandResult<codex_plus_core::official_remote::ChatGptDeviceLoginStart> {
+    let store = SettingsStore::default();
+    let settings = store.load().unwrap_or_default();
+    let home = codex_plus_core::relay_config::default_codex_home_dir();
+    let mut runtime = official_remote_runtime().lock().await;
+    log_manager_event(
+        "manager.chatgpt_device_login.start",
+        json!({
+            "activeRelayId": settings.active_relay_id
+        }),
+    );
+    match runtime
+        .device_login_start(Some(settings.codex_app_path.as_str()), &store, &home)
+        .await
+    {
+        Ok(payload) => ok(
+            "已生成 ChatGPT 设备码，请在手机或其他设备完成授权。",
+            payload,
+        ),
+        Err(error) => {
+            log_manager_event(
+                "manager.chatgpt_device_login.failed",
+                json!({ "error": error.to_string() }),
+            );
+            failed(
+                &format!("发起 ChatGPT 设备码登录失败：{error}"),
+                empty_chatgpt_device_login_start(),
+            )
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn chatgpt_web_login_status(
     login_id: String,
 ) -> CommandResult<codex_plus_core::official_remote::ChatGptLoginProgress> {
@@ -3402,6 +3436,14 @@ fn empty_chatgpt_login_start() -> codex_plus_core::official_remote::ChatGptLogin
         login_id: String::new(),
         auth_url: String::new(),
         chatgpt_url: "https://chatgpt.com/".to_string(),
+    }
+}
+
+fn empty_chatgpt_device_login_start() -> codex_plus_core::official_remote::ChatGptDeviceLoginStart {
+    codex_plus_core::official_remote::ChatGptDeviceLoginStart {
+        login_id: String::new(),
+        verification_url: String::new(),
+        user_code: String::new(),
     }
 }
 

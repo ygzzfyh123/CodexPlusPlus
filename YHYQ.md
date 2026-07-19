@@ -85,3 +85,12 @@
 - 已核对 OpenAI 官方 app-server 文档、本机 Codex CLI 帮助和本机 `0.144.2` 协议 Schema，确认官方支持 `chatgptDeviceCode` 登录，可返回验证网址与一次性用户码，并继续通过 `account/login/completed` 通知完成登录。
 - 实现方向调整为新增“设备码登录”入口：不依赖本机浏览器回调，用户可在手机或其他设备打开官方验证页并输入一次性代码；完成后仍由 Codex 官方 app-server 保存和刷新登录态。
 - 用户没有要求本次上传 GitHub；本次修改、测试和提交只保留在本地分支。
+- 已在 `official_remote` 增加官方设备码登录流程，通过 `account/login/start` 的 `chatgptDeviceCode` 类型获取 `loginId`、`verificationUrl` 和 `userCode`，并复用现有完成通知、取消、登录备份、失败回滚和纯 API 混合迁移流程。
+- 设备验证地址只允许 `https://auth.openai.com/` 或 `https://chatgpt.com/`，同时校验返回类型必须为 `chatgptDeviceCode`；一次性代码和验证地址不会写入诊断日志或持久化设置。
+- 已新增 Tauri 命令 `chatgpt_device_login_start`，管理器手机远控页现在同时提供“设备码登录”和“浏览器登录”，设备码入口不会自动打开本机浏览器。
+- 设备码等待界面会展示官方验证网址与一次性代码，支持复制代码、可选打开验证页和取消登录，并补齐中英文文案与窄屏布局。
+- 已使用本机 Codex `0.144.2` app-server 实际发起并立即取消一次设备码登录，确认官方验证域名为 `auth.openai.com`，测试过程未输出一次性代码，也未改变现有登录态。
+- 视觉检查完成：桌面端 `1280x720` 与窄屏 `390x844` 均无横向溢出、按钮文字裁切或标题挤压；临时 Vite 预览和浏览器测试标签均已关闭。
+- 验证完成：6 项 `official_remote` 测试、管理器 `cargo check`、TypeScript 检查、11 项前端测试、Vite 生产构建、Rust 格式检查、差异检查和凭据扫描均通过。
+- `tools/i18n-verify.mjs` 仍只报告仓库既有的缺失与陈旧翻译键，本次新增设备码相关键没有出现在缺失或陈旧列表中。
+- 已确认仓库未出现 Netscape Cookie、网页 Session Token 或 Cloudflare Cookie 内容；本次不会实现 Cookie 粘贴、保存或转换登录态。

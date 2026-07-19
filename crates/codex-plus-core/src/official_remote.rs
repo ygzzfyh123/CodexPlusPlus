@@ -28,6 +28,14 @@ pub struct ChatGptLoginStart {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ChatGptDeviceLoginStart {
+    pub login_id: String,
+    pub verification_url: String,
+    pub user_code: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatGptLoginProgress {
     pub login_id: Option<String>,
     pub state: String,
@@ -80,7 +88,14 @@ struct LoginCompletion {
 #[derive(Debug, Clone)]
 struct PendingLogin {
     login_id: String,
+    mode: PendingLoginMode,
     backup: LoginBackup,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PendingLoginMode {
+    Browser,
+    DeviceCode,
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +127,35 @@ impl OfficialRemoteRuntime {
             Ok(start) => {
                 self.pending_login = Some(PendingLogin {
                     login_id: start.login_id.clone(),
+                    mode: PendingLoginMode::Browser,
+                    backup,
+                });
+                Ok(start)
+            }
+            Err(error) => {
+                let _ = restore_login_backup(store, home, &backup);
+                self.client = None;
+                Err(error)
+            }
+        }
+    }
+
+    pub async fn device_login_start(
+        &mut self,
+        saved_app_path: Option<&str>,
+        store: &SettingsStore,
+        home: &Path,
+    ) -> anyhow::Result<ChatGptDeviceLoginStart> {
+        if self.pending_login.is_some() {
+            anyhow::bail!("已有 ChatGPT 登录正在等待完成");
+        }
+        let backup = capture_login_backup(store, home)?;
+        let client = self.ensure_client(saved_app_path).await?;
+        match client.start_chatgpt_device_login().await {
+            Ok(start) => {
+                self.pending_login = Some(PendingLogin {
+                    login_id: start.login_id.clone(),
+                    mode: PendingLoginMode::DeviceCode,
                     backup,
                 });
                 Ok(start)
@@ -146,10 +190,14 @@ impl OfficialRemoteRuntime {
             .as_mut()
             .context("ChatGPT 登录会话已关闭，请重新发起登录")?;
         let Some(completion) = client.take_login_completion(login_id)? else {
+            let message = match pending.mode {
+                PendingLoginMode::Browser => "正在等待浏览器完成 ChatGPT 登录。",
+                PendingLoginMode::DeviceCode => "正在等待设备码授权，可在手机或其他设备完成验证。",
+            };
             return Ok(ChatGptLoginProgress {
                 login_id: Some(login_id.to_string()),
                 state: "pending".to_string(),
-                message: "正在等待浏览器完成 ChatGPT 登录。".to_string(),
+                message: message.to_string(),
                 settings: None,
             });
         };
@@ -534,6 +582,18 @@ impl AppServerClient {
         })
     }
 
+    async fn start_chatgpt_device_login(&mut self) -> anyhow::Result<ChatGptDeviceLoginStart> {
+        let value = self
+            .request(
+                "account/login/start",
+                Some(json!({
+                    "type": "chatgptDeviceCode"
+                })),
+            )
+            .await?;
+        parse_chatgpt_device_login_start(&value)
+    }
+
     async fn cancel_login(&mut self, login_id: &str) -> anyhow::Result<()> {
         self.request("account/login/cancel", Some(json!({ "loginId": login_id })))
             .await
@@ -773,6 +833,27 @@ fn required_string(value: &Value, key: &str) -> anyhow::Result<String> {
         .with_context(|| format!("app-server 响应缺少 {key}"))
 }
 
+fn parse_chatgpt_device_login_start(value: &Value) -> anyhow::Result<ChatGptDeviceLoginStart> {
+    if value.get("type").and_then(Value::as_str) != Some("chatgptDeviceCode") {
+        anyhow::bail!("app-server 返回了非设备码登录结果");
+    }
+    let login_id = required_string(value, "loginId")?;
+    let verification_url = required_string(value, "verificationUrl")?;
+    let user_code = required_string(value, "userCode")?;
+    if !is_openai_login_url(&verification_url) {
+        anyhow::bail!("app-server 返回了非 OpenAI 官方设备验证地址");
+    }
+    Ok(ChatGptDeviceLoginStart {
+        login_id,
+        verification_url,
+        user_code,
+    })
+}
+
+fn is_openai_login_url(url: &str) -> bool {
+    url.starts_with("https://auth.openai.com/") || url.starts_with("https://chatgpt.com/")
+}
+
 fn sanitize_server_message(message: &str) -> String {
     let normalized = message
         .chars()
@@ -915,5 +996,49 @@ mod tests {
             "login failed https://auth.openai.com/oauth [redacted]"
         );
         assert!(!sanitized.contains("secret"));
+    }
+
+    #[test]
+    fn parses_official_device_login_response() {
+        let parsed = parse_chatgpt_device_login_start(&json!({
+            "type": "chatgptDeviceCode",
+            "loginId": "login-1",
+            "verificationUrl": "https://auth.openai.com/codex/device",
+            "userCode": "ABCD-EFGH"
+        }))
+        .unwrap();
+
+        assert_eq!(parsed.login_id, "login-1");
+        assert_eq!(
+            parsed.verification_url,
+            "https://auth.openai.com/codex/device"
+        );
+        assert_eq!(parsed.user_code, "ABCD-EFGH");
+    }
+
+    #[test]
+    fn rejects_non_openai_device_login_response() {
+        let error = parse_chatgpt_device_login_start(&json!({
+            "type": "chatgptDeviceCode",
+            "loginId": "login-1",
+            "verificationUrl": "https://example.test/device",
+            "userCode": "ABCD-EFGH"
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("非 OpenAI 官方设备验证地址"));
+    }
+
+    #[test]
+    fn rejects_non_device_login_response() {
+        let error = parse_chatgpt_device_login_start(&json!({
+            "type": "chatgpt",
+            "loginId": "login-1",
+            "verificationUrl": "https://auth.openai.com/codex/device",
+            "userCode": "ABCD-EFGH"
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("非设备码登录结果"));
     }
 }

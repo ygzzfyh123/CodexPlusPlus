@@ -722,6 +722,71 @@ body {
   padding: 8px 10px;
 }
 
+.remote-device-login {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  gap: 10px 14px;
+  align-items: center;
+  border: 1px solid hsl(var(--primary) / 0.3);
+  border-radius: 8px;
+  background: hsl(var(--primary) / 0.06);
+  padding: 12px;
+}
+
+.remote-device-login-copy {
+  min-width: 0;
+}
+
+.remote-device-login-copy strong,
+.remote-device-login-copy small {
+  display: block;
+}
+
+.remote-device-login-copy small {
+  margin-top: 4px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.remote-device-code {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid hsl(var(--primary) / 0.45);
+  border-radius: 8px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0;
+  padding: 8px 12px;
+}
+
+.remote-device-code:hover,
+.remote-device-code:focus-visible {
+  border-color: hsl(var(--primary) / 0.75);
+  outline: none;
+}
+
+.remote-device-url {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: hsl(var(--muted-foreground));
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.remote-device-login > .inline-flex {
+  justify-content: flex-end;
+}
+
 .remote-spin {
   flex: 0 0 auto;
   animation: spin 850ms linear infinite;
@@ -3486,12 +3551,25 @@ body {
     width: fit-content;
   }
 
+  .remote-account-panel .panel-head,
+  .remote-control-grid .panel-head {
+    flex-direction: column;
+  }
+
   .remote-account-summary {
     grid-template-columns: 42px minmax(0, 1fr);
   }
 
   .remote-account-summary > .inline-flex {
     grid-column: 2;
+  }
+
+  .remote-device-login {
+    grid-template-columns: 1fr;
+  }
+
+  .remote-device-login > .inline-flex {
+    justify-content: flex-start;
   }
 
   .remote-client-row {

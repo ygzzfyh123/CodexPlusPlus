@@ -17,13 +17,24 @@ export const EN_PLAIN: Record<string, string> = {
   "尚未连接 ChatGPT 账号": "No ChatGPT account connected",
   "配对码已复制。": "Pairing code copied.",
   "ChatGPT 账号连接": "ChatGPT account connection",
-  "先登录 ChatGPT 官网，再将同一账号安全连接到本机 Codex":
-    "Sign in on the ChatGPT website, then securely connect the same account to this Codex host.",
+  "ChatGPT 设备码登录": "ChatGPT device-code sign-in",
+  "设备码已生成，可在手机或其他设备完成授权。":
+    "The device code is ready. Complete authorization on a phone or another device.",
+  "一次性代码已复制。": "One-time code copied.",
+  "使用浏览器 OAuth 或设备码，将 ChatGPT 账号安全连接到本机 Codex":
+    "Securely connect a ChatGPT account to this Codex host using browser OAuth or a device code.",
   "不会读取、导入或保存浏览器 Cookie": "Browser cookies are never read, imported, or stored.",
   "打开 ChatGPT 官网": "Open ChatGPT website",
   "取消连接": "Cancel connection",
-  "重新连接账号": "Reconnect account",
-  "连接本机 Codex": "Connect this Codex host",
+  "设备码重新登录": "Sign in again with device code",
+  "设备码登录": "Device-code sign-in",
+  "浏览器重新登录": "Sign in again in browser",
+  "浏览器登录": "Browser sign-in",
+  "在任意设备完成授权": "Complete authorization on any device",
+  "打开官方验证页，登录 ChatGPT 后输入下面的一次性代码。":
+    "Open the official verification page, sign in to ChatGPT, then enter the one-time code below.",
+  "复制一次性代码": "Copy one-time code",
+  "打开验证页": "Open verification page",
   "正在等待浏览器完成 ChatGPT 登录": "Waiting for ChatGPT sign-in in the browser",
   "远控连接": "Remote connection",
   "由 OpenAI 官方 Remote Control 服务维护": "Maintained by OpenAI's official Remote Control service",
@@ -880,8 +891,12 @@ export const EN_BACKEND: Record<string, string> = {
   "纯 API 配置写入后未检测到完整 custom provider，请检查 config.toml 和供应商 API Key。": "After writing pure API config, no complete custom provider was detected. Please check config.toml and the provider API Key.",
   "已准备 ChatGPT 网页登录，请在浏览器中完成账号登录。":
     "ChatGPT web sign-in is ready. Complete account sign-in in the browser.",
+  "已生成 ChatGPT 设备码，请在手机或其他设备完成授权。":
+    "ChatGPT device code generated. Complete authorization on a phone or another device.",
   "当前没有等待完成的 ChatGPT 登录。": "There is no pending ChatGPT sign-in.",
   "正在等待浏览器完成 ChatGPT 登录。": "Waiting for ChatGPT sign-in in the browser.",
+  "正在等待设备码授权，可在手机或其他设备完成验证。":
+    "Waiting for device-code authorization. Complete verification on a phone or another device.",
   "ChatGPT 登录未完成。": "ChatGPT sign-in was not completed.",
   "ChatGPT 登录已完成，当前 API 供应商已保留并切换为官方登录混合模式。":
     "ChatGPT sign-in completed. The current API provider was preserved and switched to official mixed mode.",
@@ -945,6 +960,7 @@ export const EN_BACKEND_PATTERNS: Array<[RegExp, string]> = [
   [/^保存配置文件失败：(.+)$/, "Failed to save config file: $1"],
   [/^供应商切换失败：(.+)$/, "Provider switch failed: $1"],
   [/^发起 ChatGPT 网页登录失败：(.+)$/, "Failed to start ChatGPT web sign-in: $1"],
+  [/^发起 ChatGPT 设备码登录失败：(.+)$/, "Failed to start ChatGPT device-code sign-in: $1"],
   [/^检查 ChatGPT 登录状态失败：(.+)$/, "Failed to check ChatGPT sign-in status: $1"],
   [/^取消 ChatGPT 登录失败：(.+)$/, "Failed to cancel ChatGPT sign-in: $1"],
   [/^读取官方手机远控状态失败：(.+)$/, "Failed to read official mobile remote-control status: $1"],

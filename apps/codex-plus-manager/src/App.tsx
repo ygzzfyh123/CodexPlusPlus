@@ -350,6 +350,19 @@ type ChatGptLoginStartResult = CommandResult<{
   chatgptUrl: string;
 }>;
 
+type ChatGptDeviceLoginStartResult = CommandResult<{
+  loginId: string;
+  verificationUrl: string;
+  userCode: string;
+}>;
+
+type PendingChatGptLogin = {
+  loginId: string;
+  mode: "browser" | "device";
+  verificationUrl: string;
+  userCode: string;
+};
+
 type ChatGptLoginProgressResult = CommandResult<{
   loginId: string | null;
   state: "idle" | "pending" | "succeeded" | "failed" | "canceled" | string;
@@ -896,7 +909,7 @@ export function App() {
   const [relayFiles, setRelayFiles] = useState<RelayFilesResult | null>(null);
   const [officialRemote, setOfficialRemote] = useState<RemoteControlResult | null>(null);
   const [officialRemoteBusy, setOfficialRemoteBusy] = useState(false);
-  const [pendingChatGptLoginId, setPendingChatGptLoginId] = useState("");
+  const [pendingChatGptLogin, setPendingChatGptLogin] = useState<PendingChatGptLogin | null>(null);
   const [remotePairing, setRemotePairing] = useState<RemoteControlPairingResult | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflictsResult | null>(null);
   const [relayEnvironment, setRelayEnvironment] = useState<RelayEnvironmentResult | null>(null);
@@ -2113,7 +2126,7 @@ export function App() {
   };
 
   const startChatGptWebLogin = async () => {
-    if (officialRemoteBusy || pendingChatGptLoginId) return;
+    if (officialRemoteBusy || pendingChatGptLogin) return;
     setOfficialRemoteBusy(true);
     try {
       const result = await run(() => call<ChatGptLoginStartResult>("chatgpt_web_login_start"));
@@ -2122,7 +2135,12 @@ export function App() {
         showResultNotice(t("ChatGPT 登录"), result);
         return;
       }
-      setPendingChatGptLoginId(result.loginId);
+      setPendingChatGptLogin({
+        loginId: result.loginId,
+        mode: "browser",
+        verificationUrl: result.authUrl,
+        userCode: "",
+      });
       await openExternalUrl(result.authUrl);
       showNotice(t("ChatGPT 登录"), t("请在浏览器中完成登录，管理器会自动接收结果。"), "accepted");
     } finally {
@@ -2130,17 +2148,50 @@ export function App() {
     }
   };
 
-  const cancelChatGptWebLogin = async () => {
-    if (!pendingChatGptLoginId) return;
+  const startChatGptDeviceLogin = async () => {
+    if (officialRemoteBusy || pendingChatGptLogin) return;
+    setOfficialRemoteBusy(true);
+    try {
+      const result = await run(() =>
+        call<ChatGptDeviceLoginStartResult>("chatgpt_device_login_start"),
+      );
+      if (!result) return;
+      if (
+        !isSuccessStatus(result.status) ||
+        !result.loginId ||
+        !result.verificationUrl ||
+        !result.userCode
+      ) {
+        showResultNotice(t("ChatGPT 设备码登录"), result);
+        return;
+      }
+      setPendingChatGptLogin({
+        loginId: result.loginId,
+        mode: "device",
+        verificationUrl: result.verificationUrl,
+        userCode: result.userCode,
+      });
+      showNotice(
+        t("ChatGPT 设备码登录"),
+        t("设备码已生成，可在手机或其他设备完成授权。"),
+        "accepted",
+      );
+    } finally {
+      setOfficialRemoteBusy(false);
+    }
+  };
+
+  const cancelChatGptLogin = async () => {
+    if (!pendingChatGptLogin) return;
     setOfficialRemoteBusy(true);
     try {
       const result = await run(() =>
         call<ChatGptLoginProgressResult>("chatgpt_web_login_cancel", {
-          loginId: pendingChatGptLoginId,
+          loginId: pendingChatGptLogin.loginId,
         }),
       );
       if (result) {
-        setPendingChatGptLoginId("");
+        setPendingChatGptLogin(null);
         showResultNotice(t("ChatGPT 登录"), result);
         await refreshSettings(true);
         await refreshRelay(true);
@@ -2212,7 +2263,7 @@ export function App() {
   };
 
   useEffect(() => {
-    if (!pendingChatGptLoginId) return;
+    if (!pendingChatGptLogin) return;
     let disposed = false;
     let inFlight = false;
     const poll = async () => {
@@ -2221,17 +2272,17 @@ export function App() {
       try {
         const result = await run(() =>
           call<ChatGptLoginProgressResult>("chatgpt_web_login_status", {
-            loginId: pendingChatGptLoginId,
+            loginId: pendingChatGptLogin.loginId,
           }),
         );
         if (!result || disposed) return;
         if (!isSuccessStatus(result.status)) {
-          setPendingChatGptLoginId("");
+          setPendingChatGptLogin(null);
           showResultNotice(t("ChatGPT 登录"), result);
           return;
         }
         if (result.state === "pending") return;
-        setPendingChatGptLoginId("");
+        setPendingChatGptLogin(null);
         showResultNotice(t("ChatGPT 登录"), result);
         if (result.state === "succeeded") {
           await refreshSettings(true);
@@ -2248,7 +2299,7 @@ export function App() {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [pendingChatGptLoginId]);
+  }, [pendingChatGptLogin]);
 
   useEffect(() => {
     if (!remotePairing?.pairingCode) return;
@@ -2466,7 +2517,8 @@ export function App() {
       openExternalUrl,
       openChatGptWebsite,
       startChatGptWebLogin,
-      cancelChatGptWebLogin,
+      startChatGptDeviceLogin,
+      cancelChatGptLogin,
       enableOfficialRemote,
       disableOfficialRemote,
       startOfficialRemotePairing,
@@ -2505,7 +2557,7 @@ export function App() {
       disableWatcher: () => watcherAction("disable_watcher"),
       toggleTheme: () => setTheme((current) => (current === "dark" ? "light" : "dark")),
     }),
-    [route, launchForm, settingsForm, settings, removeOwnedData, update, updateInstallProgress.active, logs, diagnostics, theme, relayFiles, localSessions, zedRemoteProjects, selectedProviderSyncTarget, envConflicts, relayEnvironment, ccsProviders, officialRemote, officialRemoteBusy, pendingChatGptLoginId, remotePairing],
+    [route, launchForm, settingsForm, settings, removeOwnedData, update, updateInstallProgress.active, logs, diagnostics, theme, relayFiles, localSessions, zedRemoteProjects, selectedProviderSyncTarget, envConflicts, relayEnvironment, ccsProviders, officialRemote, officialRemoteBusy, pendingChatGptLogin, remotePairing],
   );
   const hasUpdate = update?.updateAvailable === true;
 
@@ -2613,7 +2665,7 @@ export function App() {
             <RemoteControlScreen
               remote={officialRemote}
               pairing={remotePairing}
-              pendingLoginId={pendingChatGptLoginId}
+              pendingLogin={pendingChatGptLogin}
               busy={officialRemoteBusy}
               actions={actions}
             />
@@ -2776,7 +2828,8 @@ type Actions = {
   openExternalUrl: (url: string) => Promise<void>;
   openChatGptWebsite: () => Promise<void>;
   startChatGptWebLogin: () => Promise<void>;
-  cancelChatGptWebLogin: () => Promise<void>;
+  startChatGptDeviceLogin: () => Promise<void>;
+  cancelChatGptLogin: () => Promise<void>;
   enableOfficialRemote: () => Promise<void>;
   disableOfficialRemote: () => Promise<void>;
   startOfficialRemotePairing: () => Promise<void>;
@@ -2889,13 +2942,13 @@ function OverviewScreen({
 function RemoteControlScreen({
   remote,
   pairing,
-  pendingLoginId,
+  pendingLogin,
   busy,
   actions,
 }: {
   remote: RemoteControlResult | null;
   pairing: RemoteControlPairingResult | null;
-  pendingLoginId: string;
+  pendingLogin: PendingChatGptLogin | null;
   busy: boolean;
   actions: Actions;
 }) {
@@ -2914,13 +2967,22 @@ function RemoteControlScreen({
       await actions.showMessage(t("复制失败"), stringifyError(error), "failed");
     }
   };
+  const copyDeviceCode = async () => {
+    if (!pendingLogin?.userCode) return;
+    try {
+      await navigator.clipboard.writeText(pendingLogin.userCode);
+      await actions.showMessage(t("ChatGPT 设备码登录"), t("一次性代码已复制。"), "ok");
+    } catch (error) {
+      await actions.showMessage(t("复制失败"), stringifyError(error), "failed");
+    }
+  };
 
   return (
     <>
       <Panel className="remote-account-panel">
         <CardHead
           title={t("ChatGPT 账号连接")}
-          detail={t("先登录 ChatGPT 官网，再将同一账号安全连接到本机 Codex")}
+          detail={t("使用浏览器 OAuth 或设备码，将 ChatGPT 账号安全连接到本机 Codex")}
         />
         <CardContent className="remote-account-content">
           <div className="remote-account-summary">
@@ -2938,23 +3000,59 @@ function RemoteControlScreen({
             <Badge status={signedIn ? "ok" : "not_checked"} />
           </div>
           <Toolbar>
-            <Button onClick={() => void actions.openChatGptWebsite()} variant="outline">
-              <ExternalLink className="h-4 w-4" />
-              {t("打开 ChatGPT 官网")}
-            </Button>
-            {pendingLoginId ? (
-              <Button disabled={busy} onClick={() => void actions.cancelChatGptWebLogin()} variant="outline">
+            {pendingLogin ? (
+              <Button disabled={busy} onClick={() => void actions.cancelChatGptLogin()} variant="outline">
                 <Unplug className="h-4 w-4" />
                 {t("取消连接")}
               </Button>
             ) : (
-              <Button disabled={busy} onClick={() => void actions.startChatGptWebLogin()}>
-                <Link2 className="h-4 w-4" />
-                {signedIn ? t("重新连接账号") : t("连接本机 Codex")}
-              </Button>
+              <>
+                <Button disabled={busy} onClick={() => void actions.startChatGptDeviceLogin()}>
+                  <KeyRound className="h-4 w-4" />
+                  {signedIn ? t("设备码重新登录") : t("设备码登录")}
+                </Button>
+                <Button disabled={busy} onClick={() => void actions.startChatGptWebLogin()} variant="outline">
+                  <Link2 className="h-4 w-4" />
+                  {signedIn ? t("浏览器重新登录") : t("浏览器登录")}
+                </Button>
+                <Button onClick={() => void actions.openChatGptWebsite()} size="icon" title={t("打开 ChatGPT 官网")} variant="outline">
+                  <ExternalLink className="h-4 w-4" />
+                </Button>
+              </>
             )}
           </Toolbar>
-          {pendingLoginId ? (
+          {pendingLogin?.mode === "device" ? (
+            <div className="remote-device-login">
+              <div className="remote-device-login-copy">
+                <strong>{t("在任意设备完成授权")}</strong>
+                <small>{t("打开官方验证页，登录 ChatGPT 后输入下面的一次性代码。")}</small>
+              </div>
+              <button
+                className="remote-device-code"
+                onClick={() => void copyDeviceCode()}
+                title={t("复制一次性代码")}
+                type="button"
+              >
+                {pendingLogin.userCode}
+                <Copy className="h-4 w-4" />
+              </button>
+              <code className="remote-device-url">{pendingLogin.verificationUrl}</code>
+              <Toolbar>
+                <Button
+                  disabled={busy}
+                  onClick={() => void actions.openExternalUrl(pendingLogin.verificationUrl)}
+                  variant="outline"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  {t("打开验证页")}
+                </Button>
+                <Button disabled={busy} onClick={() => void copyDeviceCode()} variant="secondary">
+                  <Copy className="h-4 w-4" />
+                  {t("复制一次性代码")}
+                </Button>
+              </Toolbar>
+            </div>
+          ) : pendingLogin ? (
             <div className="remote-inline-status">
               <RefreshCw className="h-4 w-4 remote-spin" />
               <span>{t("正在等待浏览器完成 ChatGPT 登录")}</span>

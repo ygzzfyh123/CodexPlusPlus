@@ -124,6 +124,7 @@ pub fn run() {
             commands::apply_pure_api_injection,
             commands::clear_relay_injection,
             commands::chatgpt_web_login_start,
+            commands::chatgpt_device_login_start,
             commands::chatgpt_web_login_status,
             commands::chatgpt_web_login_cancel,
             commands::official_remote_control_status,
