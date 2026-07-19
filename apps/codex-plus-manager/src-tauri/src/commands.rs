@@ -186,6 +186,12 @@ pub struct RelaySwitchPayload {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RemotePairingStatusPayload {
+    pub claimed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SettingsBackfillPayload {
     pub settings: BackendSettings,
 }
@@ -1971,6 +1977,227 @@ pub fn relay_status() -> CommandResult<RelayPayload> {
 }
 
 #[tauri::command]
+pub async fn chatgpt_web_login_start()
+-> CommandResult<codex_plus_core::official_remote::ChatGptLoginStart> {
+    let store = SettingsStore::default();
+    let settings = store.load().unwrap_or_default();
+    let home = codex_plus_core::relay_config::default_codex_home_dir();
+    let mut runtime = official_remote_runtime().lock().await;
+    log_manager_event(
+        "manager.chatgpt_web_login.start",
+        json!({
+            "activeRelayId": settings.active_relay_id
+        }),
+    );
+    match runtime
+        .login_start(Some(settings.codex_app_path.as_str()), &store, &home)
+        .await
+    {
+        Ok(payload) => ok(
+            "已准备 ChatGPT 网页登录，请在浏览器中完成账号登录。",
+            payload,
+        ),
+        Err(error) => {
+            log_manager_event(
+                "manager.chatgpt_web_login.failed",
+                json!({ "error": error.to_string() }),
+            );
+            failed(
+                &format!("发起 ChatGPT 网页登录失败：{error}"),
+                empty_chatgpt_login_start(),
+            )
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn chatgpt_web_login_status(
+    login_id: String,
+) -> CommandResult<codex_plus_core::official_remote::ChatGptLoginProgress> {
+    let store = SettingsStore::default();
+    let home = codex_plus_core::relay_config::default_codex_home_dir();
+    let mut runtime = official_remote_runtime().lock().await;
+    match runtime.login_status(login_id.trim(), &store, &home).await {
+        Ok(payload) => {
+            let message = payload.message.clone();
+            if payload.state == "succeeded" {
+                log_manager_event(
+                    "manager.chatgpt_web_login.ok",
+                    json!({
+                        "activeRelayId": payload
+                            .settings
+                            .as_ref()
+                            .map(|settings| settings.active_relay_id.as_str())
+                    }),
+                );
+            }
+            ok(&message, payload)
+        }
+        Err(error) => {
+            log_manager_event(
+                "manager.chatgpt_web_login.migration_failed",
+                json!({ "error": error.to_string() }),
+            );
+            failed(
+                &format!("检查 ChatGPT 登录状态失败：{error}"),
+                empty_chatgpt_login_progress(),
+            )
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn chatgpt_web_login_cancel(
+    login_id: String,
+) -> CommandResult<codex_plus_core::official_remote::ChatGptLoginProgress> {
+    let store = SettingsStore::default();
+    let home = codex_plus_core::relay_config::default_codex_home_dir();
+    let mut runtime = official_remote_runtime().lock().await;
+    match runtime.login_cancel(login_id.trim(), &store, &home).await {
+        Ok(payload) => {
+            let message = payload.message.clone();
+            ok(&message, payload)
+        }
+        Err(error) => failed(
+            &format!("取消 ChatGPT 登录失败：{error}"),
+            empty_chatgpt_login_progress(),
+        ),
+    }
+}
+
+#[tauri::command]
+pub async fn official_remote_control_status()
+-> CommandResult<codex_plus_core::official_remote::RemoteControlSnapshot> {
+    let saved_app_path = saved_codex_app_path();
+    let mut runtime = official_remote_runtime().lock().await;
+    match runtime.status(saved_app_path.as_deref()).await {
+        Ok(payload) => ok("官方手机远控状态已刷新。", payload),
+        Err(error) => failed(
+            &format!("读取官方手机远控状态失败：{error}"),
+            empty_remote_control_snapshot(),
+        ),
+    }
+}
+
+#[tauri::command]
+pub async fn official_remote_control_enable()
+-> CommandResult<codex_plus_core::official_remote::RemoteControlSnapshot> {
+    let saved_app_path = saved_codex_app_path();
+    let mut runtime = official_remote_runtime().lock().await;
+    match runtime.enable(saved_app_path.as_deref()).await {
+        Ok(payload) => {
+            log_manager_event(
+                "manager.official_remote_control.enabled",
+                json!({
+                    "status": payload.status,
+                    "hasEnvironmentId": payload.environment_id.is_some()
+                }),
+            );
+            ok("官方手机远控已启用。", payload)
+        }
+        Err(error) => failed(
+            &format!("启用官方手机远控失败：{error}"),
+            empty_remote_control_snapshot(),
+        ),
+    }
+}
+
+#[tauri::command]
+pub async fn official_remote_control_disable()
+-> CommandResult<codex_plus_core::official_remote::RemoteControlSnapshot> {
+    let saved_app_path = saved_codex_app_path();
+    let mut runtime = official_remote_runtime().lock().await;
+    match runtime.disable(saved_app_path.as_deref()).await {
+        Ok(payload) => {
+            log_manager_event(
+                "manager.official_remote_control.disabled",
+                json!({ "status": payload.status }),
+            );
+            ok("官方手机远控已关闭。", payload)
+        }
+        Err(error) => failed(
+            &format!("关闭官方手机远控失败：{error}"),
+            empty_remote_control_snapshot(),
+        ),
+    }
+}
+
+#[tauri::command]
+pub async fn official_remote_control_pairing_start()
+-> CommandResult<codex_plus_core::official_remote::RemoteControlPairing> {
+    let saved_app_path = saved_codex_app_path();
+    let mut runtime = official_remote_runtime().lock().await;
+    match runtime.pairing_start(saved_app_path.as_deref()).await {
+        Ok(payload) => ok("手机配对码已生成。", payload),
+        Err(error) => failed(
+            &format!("生成手机配对码失败：{error}"),
+            empty_remote_control_pairing(),
+        ),
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePairingStatusRequest {
+    pub pairing_code: Option<String>,
+    pub manual_pairing_code: Option<String>,
+}
+
+#[tauri::command]
+pub async fn official_remote_control_pairing_status(
+    request: RemotePairingStatusRequest,
+) -> CommandResult<RemotePairingStatusPayload> {
+    let saved_app_path = saved_codex_app_path();
+    let mut runtime = official_remote_runtime().lock().await;
+    match runtime
+        .pairing_status(
+            saved_app_path.as_deref(),
+            request.pairing_code.as_deref(),
+            request.manual_pairing_code.as_deref(),
+        )
+        .await
+    {
+        Ok(claimed) => ok(
+            "手机配对状态已刷新。",
+            RemotePairingStatusPayload { claimed },
+        ),
+        Err(error) => failed(
+            &format!("读取手机配对状态失败：{error}"),
+            RemotePairingStatusPayload { claimed: false },
+        ),
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteClientRevokeRequest {
+    pub environment_id: String,
+    pub client_id: String,
+}
+
+#[tauri::command]
+pub async fn official_remote_control_revoke_client(
+    request: RemoteClientRevokeRequest,
+) -> CommandResult<codex_plus_core::official_remote::RemoteControlSnapshot> {
+    let saved_app_path = saved_codex_app_path();
+    let mut runtime = official_remote_runtime().lock().await;
+    match runtime
+        .revoke_client(
+            saved_app_path.as_deref(),
+            request.environment_id.trim(),
+            request.client_id.trim(),
+        )
+        .await
+    {
+        Ok(payload) => ok("已撤销所选手机设备。", payload),
+        Err(error) => failed(
+            &format!("撤销手机设备失败：{error}"),
+            empty_remote_control_snapshot(),
+        ),
+    }
+}
+
+#[tauri::command]
 pub fn read_relay_files() -> CommandResult<RelayFilesPayload> {
     let home = codex_plus_core::relay_config::default_codex_home_dir();
     match relay_files_payload_from_home(&home) {
@@ -3150,6 +3377,64 @@ fn relay_switch_payload(
 fn relay_switch_mutex() -> &'static Mutex<()> {
     static RELAY_SWITCH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     RELAY_SWITCH_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn official_remote_runtime()
+-> &'static tokio::sync::Mutex<codex_plus_core::official_remote::OfficialRemoteRuntime> {
+    static RUNTIME: OnceLock<
+        tokio::sync::Mutex<codex_plus_core::official_remote::OfficialRemoteRuntime>,
+    > = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::sync::Mutex::new(codex_plus_core::official_remote::OfficialRemoteRuntime::default())
+    })
+}
+
+fn saved_codex_app_path() -> Option<String> {
+    SettingsStore::default()
+        .load()
+        .ok()
+        .map(|settings| settings.codex_app_path)
+        .filter(|path| !path.trim().is_empty())
+}
+
+fn empty_chatgpt_login_start() -> codex_plus_core::official_remote::ChatGptLoginStart {
+    codex_plus_core::official_remote::ChatGptLoginStart {
+        login_id: String::new(),
+        auth_url: String::new(),
+        chatgpt_url: "https://chatgpt.com/".to_string(),
+    }
+}
+
+fn empty_chatgpt_login_progress() -> codex_plus_core::official_remote::ChatGptLoginProgress {
+    codex_plus_core::official_remote::ChatGptLoginProgress {
+        login_id: None,
+        state: "failed".to_string(),
+        message: String::new(),
+        settings: None,
+    }
+}
+
+fn empty_remote_control_snapshot() -> codex_plus_core::official_remote::RemoteControlSnapshot {
+    codex_plus_core::official_remote::RemoteControlSnapshot {
+        account_type: "none".to_string(),
+        account_label: None,
+        plan_type: None,
+        requires_openai_auth: false,
+        status: "disabled".to_string(),
+        server_name: String::new(),
+        installation_id: String::new(),
+        environment_id: None,
+        clients: Vec::new(),
+    }
+}
+
+fn empty_remote_control_pairing() -> codex_plus_core::official_remote::RemoteControlPairing {
+    codex_plus_core::official_remote::RemoteControlPairing {
+        pairing_code: String::new(),
+        manual_pairing_code: None,
+        environment_id: String::new(),
+        expires_at: 0,
+    }
 }
 
 fn empty_context_entries() -> codex_plus_core::relay_config::CodexContextEntries {
