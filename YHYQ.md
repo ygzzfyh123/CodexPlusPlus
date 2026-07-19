@@ -67,3 +67,5 @@
 - 已核对当前正式版本为 `1.2.49`，本次计划发布补丁版本 `v1.2.50`。
 - 已确认 GitHub CLI 当前登录 `ygzzfyh123`，目标仓库为 `ygzzfyh123/CodexPPP`，现有 `v1.2.49` Release 为正式发行版。
 - 已确认 `release-assets.yml` 会校验版本与本地品牌，并通过 GitHub Actions 构建 Windows x64、macOS x64、macOS ARM64 共六个安装资产后发布 Release。
+- 已将发布版本统一提升到 `1.2.50`，同步更新 Rust workspace、四个 workspace package 的 Cargo.lock、前端 package、package-lock、Tauri 配置和更新日志。
+- `1.2.50` 更新日志已明确记录 ChatGPT 官网登录、本地 OAuth 回调、纯 API 到官方混合模式迁移、官方手机远控、配对和设备撤销，以及不读取或导入浏览器 Cookie 的安全边界。

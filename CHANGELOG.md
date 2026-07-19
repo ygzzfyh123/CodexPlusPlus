@@ -1,5 +1,15 @@
 # 更新日志
 
+## 1.2.50 - 2026-07-19
+
+- 新增独立“手机远控”页面，可查看 ChatGPT 账号、套餐、官方 Remote Control 状态、主机标识、配对码和已连接设备。
+- 新增 ChatGPT 官网登录流程：先在 `chatgpt.com` 完成普通登录，再通过 ChatGPT 品牌的 OpenAI 官方 OAuth 和本机环回回调把账号安全连接到 Codex++。
+- 电脑端使用纯 API 供应商时，登录成功后会自动迁移为官方混合模式；ChatGPT 登录态保留在 `auth.json`，自定义 API Key 保留在 provider 的 `experimental_bearer_token`。
+- 登录发起前会备份 `config.toml`、`auth.json` 和供应商设置，登录失败、取消或迁移异常时自动回滚，避免覆盖现有 API 配置。
+- 新增官方手机远控启用、关闭、短时手动配对码、配对状态轮询、设备列表和设备撤销能力。
+- app-server 使用长期存活的 stdio JSON-RPC 会话，并优先定位 Codex 桌面应用释放到本机的可执行 CLI，兼容 Windows 与 macOS 安装布局。
+- 不读取浏览器 Cookie，不支持粘贴或转换 ChatGPT 网页 Session Token；app-server 错误中的 URL 查询参数、token 关键词和超长凭据片段会在显示或记录前脱敏。
+
 ## 1.2.49 - 2026-07-19
 
 - Codex增强页新增“关闭 Codex 自动更新”开关，只控制官方 Codex 桌面应用，不影响 Codex++ 自身的 GitHub Release 更新。
