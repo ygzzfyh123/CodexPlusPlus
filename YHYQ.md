@@ -107,3 +107,9 @@
 - 已核验正式 Release 包含 Windows x64 setup/ZIP、macOS x64 DMG/ZIP、macOS ARM64 DMG/ZIP 共六项资产，所有资产均为 uploaded 状态并带 SHA-256 摘要。
 - 已将自动生成的简略正文替换为完整中文发行说明，明确记录设备码登录、浏览器登录保留、纯 API 混合迁移、官方域名校验、Cookie 安全边界、窄屏布局和验证结果。
 - 发布地址：`https://github.com/ygzzfyh123/CodexPPP/releases/tag/v1.2.51`。
+- 用户请求先出方案：再次评估 Cookie 登录；若不可行，则考虑移除官方登录与官方手机远控，改为用户自有服务器或更合适的手机控制方案。
+- 已确认官方 app-server 的公开登录类型是 API Key、浏览器 ChatGPT OAuth 和 ChatGPT 设备码；网页 Cookie 不是官方远控认证输入，无法作为稳定、受支持的官方远控登录方式。
+- 已复核仓库中的实验性 `apps/codex-plus-mobile-relay`：已有 WebSocket 转发、AES-GCM 消息封装、app-server JSON-RPC、会话列表、消息流和 `turn/start` 基础，但未纳入 workspace，且房间令牌、URL 查询参数、密钥派生、重放防护和部署认证仍不满足正式上线要求。
+- 推荐方案为“自托管零知识中继”：桌面 Codex++ 保持纯 API 模式，通过出站 WebSocket 连接用户服务器；手机 PWA 通过短时配对码建立设备身份，双方端到端加密，服务器只转发密文。
+- 推荐第一阶段保留官方登录与官方远控作为可选兼容入口，同时新增“自建远控”模式；稳定验证后再决定是否隐藏或移除官方登录，避免一次性破坏现有用户路径。
+- 本轮仅形成方案并记录，没有修改功能代码，没有推送 GitHub，也没有创建 Release。
