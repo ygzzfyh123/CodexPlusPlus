@@ -37,3 +37,8 @@
 - 用户请求：研究并实现 Codex++ 在电脑端使用 API 调用模式时，仍可在设置中额外登录 ChatGPT/Codex 账户，从而与同账户手机 ChatGPT 应用建立远程调用链接。
 - 已读取项目根目录、工作记录、Git 状态和文件清单；当前位于干净分支 `远程调用`，仓库包含独立的 `apps/codex-plus-mobile-relay` 应用。
 - 已创建修改前检查点提交 `ef642fd`，后续将重点分析 Codex 登录态、API 鉴权、移动端远程调用协议和现有注入桥接的可复用边界。
+- 已刷新并核对 2026-07-19 的官方 Codex 手册：设备远控要求主机桌面应用登录与手机相同的 ChatGPT 账号和 workspace；退出 ChatGPT 会关闭 Remote Control；官方 CLI 同时提供实验性的 `codex remote-control start/stop/pair --json`。
+- 已确认本机 Codex 桌面版本为 `26.707.9981.0`、CLI 为 `0.144.2`，当前纯 API 登录只在 `auth.json` 中保存 `auth_mode=apikey` 与 API Key，因此没有可供官方远控使用的 ChatGPT token。
+- 已确认 Codex++ 现有“官方登录混入 API Key”模式正好具备所需双边界：ChatGPT token 保留在 `auth.json`，自定义 API Key 写入当前 provider 的 `experimental_bearer_token`。
+- 已审计旧提交 `bd8a5ef` 的自建手机中继方案；该方案后来已从正式管理器和设置模型移除，只留下未纳入 workspace 的实验应用和部分样式，不应作为本次官方 ChatGPT 手机远控的实现基础。
+- 已确定实现方向：新增官方手机远控面板，支持检测账号、发起 ChatGPT 登录、把当前纯 API 供应商迁移为官方登录混入 API、启动或停止官方 Remote Control，并生成短时手动配对码。
