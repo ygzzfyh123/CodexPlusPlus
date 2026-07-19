@@ -98,3 +98,6 @@
 - 已创建发布前检查点 `eea0a37`，确认远端 `main` 是当前分支祖先，远端不存在 `v1.2.51` 标签或 Release。
 - 本次计划发布补丁版本 `v1.2.51`，发布说明将明确设备码登录、浏览器登录保留、纯 API 混合迁移、安全域名校验、Cookie 安全边界和窄屏布局优化。
 - 已将 Rust workspace、Cargo.lock、前端 package、package-lock 和 Tauri 配置版本统一提升到 `1.2.51`，并新增对应更新日志。
+- `v1.2.51` 发布前完整验证通过：`cargo test --workspace -- --test-threads=1` 全部零失败，前端 TypeScript 检查、11 项测试和 Vite 生产构建通过。
+- `cargo fmt --all -- --check`、`git diff --check` 和本地 README/赞赏码品牌保护均通过；Vite 仅保留既有的单 chunk 大于 500 KB 警告。
+- 已再次核对 Rust workspace、Cargo.lock、前端 package、package-lock 和 Tauri 配置版本均为 `1.2.51`，可创建正式发布标签。
