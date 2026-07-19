@@ -20,3 +20,9 @@
 - 已检查实机 Codex `26.707.9981.0` 的主进程更新器实现，确认 `CODEX_SPARKLE_ENABLED=false` 会在更新器初始化前同时关闭 macOS Sparkle 与 Windows Store/MSIX 更新器。
 - 已确认仅依赖渲染层 `disableSparkleAutodownload` 存在启动时序风险；实现将从 Codex 进程启动环境阻断更新器，并覆盖 Windows 打包版、Windows 便携版和 macOS App 启动链路。
 - 已确认新增开关不会修改 Codex++ 自身的 GitHub Release 检查、下载和安装功能。
+- 已新增 `codexAppDisableAutoUpdate` 设置，默认关闭；旧版配置缺少该字段时继续允许 Codex 更新。
+- 已新增跨平台 Codex 更新策略：Windows 当前用户环境写入或移除 `CODEX_SPARKLE_ENABLED=false` 并广播环境变化；macOS 使用 `launchctl` 设置或移除同一变量；便携版和直接启动进程会显式注入或移除该变量。
+- 已在 Codex 启动前、管理器保存设置、页面桥接设置更新、完整配置导入和设置重置时同步应用策略。
+- 已在 Codex增强页“界面与启动”分组新增“关闭 Codex 自动更新”开关，切换后立即保存，并明确说明不影响 Codex++ 自身 GitHub Release 更新、需重启 Codex 完整生效。
+- 验证完成：专项测试 5 项、启动器测试 69 项、桥接测试 25 项、强制中文和粘贴测试 10 项、前端测试 11 项、TypeScript 检查、Vite 生产构建及 Windows 管理器 `cargo check` 均通过。
+- `tools/i18n-verify.mjs` 仍报告仓库既有的缺失和陈旧翻译键；本次新增的两个英文词条已确认完整覆盖，没有出现在缺失列表中。

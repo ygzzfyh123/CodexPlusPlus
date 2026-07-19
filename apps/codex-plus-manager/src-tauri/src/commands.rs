@@ -518,13 +518,20 @@ pub fn load_settings() -> CommandResult<SettingsPayload> {
 #[tauri::command]
 pub fn save_settings(settings: BackendSettings) -> CommandResult<SettingsPayload> {
     let settings = normalize_settings_before_save(settings);
-    let save_result = SettingsStore::default().save(&settings).and_then(|_| {
-        codex_plus_core::relay_config::set_codex_sub_agent_max_threads_in_home(
-            &codex_plus_core::relay_config::default_codex_home_dir(),
-            settings.codex_app_sub_agent_max_threads,
-        )
-        .map(|_| ())
-    });
+    let save_result = SettingsStore::default()
+        .save(&settings)
+        .and_then(|_| {
+            codex_plus_core::relay_config::set_codex_sub_agent_max_threads_in_home(
+                &codex_plus_core::relay_config::default_codex_home_dir(),
+                settings.codex_app_sub_agent_max_threads,
+            )
+            .map(|_| ())
+        })
+        .and_then(|_| {
+            codex_plus_core::codex_auto_update::apply_codex_auto_update_policy(
+                settings.codex_app_disable_auto_update,
+            )
+        });
     match save_result {
         Ok(()) => {
             let max_threads = settings.codex_app_sub_agent_max_threads;
@@ -578,10 +585,21 @@ pub fn import_full_config(path: String) -> CommandResult<Value> {
     }
     match codex_plus_core::config_backup::import_full_config(&path, &default_config_backup_paths())
     {
-        Ok(result) => ok(
-            "完整配置已导入，并已在导入前自动备份原配置。",
-            serde_json::to_value(result).unwrap_or_else(|_| json!({})),
-        ),
+        Ok(result) => {
+            let payload = serde_json::to_value(result).unwrap_or_else(|_| json!({}));
+            let policy_result = SettingsStore::default().load().and_then(|settings| {
+                codex_plus_core::codex_auto_update::apply_codex_auto_update_policy(
+                    settings.codex_app_disable_auto_update,
+                )
+            });
+            match policy_result {
+                Ok(()) => ok("完整配置已导入，并已在导入前自动备份原配置。", payload),
+                Err(error) => failed(
+                    &format!("完整配置已导入，但应用 Codex 自动更新策略失败：{error}"),
+                    payload,
+                ),
+            }
+        }
         Err(error) => failed(&format!("导入完整配置失败：{error}"), json!({})),
     }
 }
@@ -1897,7 +1915,11 @@ pub fn copy_diagnostics() -> CommandResult<DiagnosticsPayload> {
 #[tauri::command]
 pub fn reset_settings() -> CommandResult<SettingsPayload> {
     let settings = BackendSettings::default();
-    match SettingsStore::default().save(&settings) {
+    match SettingsStore::default().save(&settings).and_then(|_| {
+        codex_plus_core::codex_auto_update::apply_codex_auto_update_policy(
+            settings.codex_app_disable_auto_update,
+        )
+    }) {
         Ok(()) => settings_payload("设置已重置为默认值。", "设置重置后重新读取失败"),
         Err(error) => failed(
             &format!("重置设置失败：{error}"),

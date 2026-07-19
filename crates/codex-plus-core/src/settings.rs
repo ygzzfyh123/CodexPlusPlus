@@ -281,6 +281,8 @@ pub struct BackendSettings {
     pub codex_app_force_chinese_locale: bool,
     #[serde(rename = "codexAppFastStartup", default)]
     pub codex_app_fast_startup: bool,
+    #[serde(rename = "codexAppDisableAutoUpdate", default)]
+    pub codex_app_disable_auto_update: bool,
     #[serde(rename = "codexAppPerformanceProtection", default = "default_true")]
     pub codex_app_performance_protection: bool,
     #[serde(rename = "codexAppProjectMove", default = "default_true")]
@@ -415,6 +417,7 @@ impl Default for BackendSettings {
             codex_app_paste_fix: false,
             codex_app_force_chinese_locale: true,
             codex_app_fast_startup: false,
+            codex_app_disable_auto_update: false,
             codex_app_performance_protection: true,
             codex_app_project_move: true,
             codex_app_thread_id_badge: false,
@@ -1004,6 +1007,7 @@ fn merge_known_setting_fields(target: &mut Map<String, Value>, source: &Map<Stri
     merge_bool_setting(target, source, "codexAppPasteFix");
     merge_bool_setting(target, source, "codexAppForceChineseLocale");
     merge_bool_setting(target, source, "codexAppFastStartup");
+    merge_bool_setting(target, source, "codexAppDisableAutoUpdate");
     merge_bool_setting(target, source, "codexAppPerformanceProtection");
     merge_bool_setting(target, source, "codexAppProjectMove");
     merge_bool_setting(target, source, "codexAppThreadIdBadge");
@@ -1514,6 +1518,7 @@ mod tests {
         assert!(settings.codex_app_plugin_auto_expand);
         assert!(!settings.codex_app_thread_id_badge);
         assert!(settings.codex_app_force_chinese_locale);
+        assert!(!settings.codex_app_disable_auto_update);
         assert!(!settings.codex_goals_enabled);
         assert!(settings.codex_app_path.is_empty());
         assert!(settings.codex_extra_args.is_empty());

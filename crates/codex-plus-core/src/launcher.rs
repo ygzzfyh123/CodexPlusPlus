@@ -802,6 +802,10 @@ impl LaunchHooks for DefaultLaunchHooks {
         settings: &BackendSettings,
         extra_args: &[String],
     ) -> anyhow::Result<CodexLaunch> {
+        crate::codex_auto_update::apply_codex_auto_update_policy(
+            settings.codex_app_disable_auto_update,
+        )
+        .context("failed to apply Codex automatic update policy")?;
         let native_menu_localization_enabled = settings.codex_app_native_menu_localization;
         let native_menu_inspector_port =
             native_menu_localization_enabled.then(|| select_native_menu_inspector_port(debug_port));
@@ -865,7 +869,12 @@ impl LaunchHooks for DefaultLaunchHooks {
             let executable = command
                 .first()
                 .ok_or_else(|| anyhow::anyhow!("macOS open command is empty"))?;
-            let child = Command::new(executable)
+            let mut child_command = Command::new(executable);
+            crate::codex_auto_update::configure_codex_process_command(
+                &mut child_command,
+                settings.codex_app_disable_auto_update,
+            );
+            let child = child_command
                 .args(&command[1..])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -896,6 +905,10 @@ impl LaunchHooks for DefaultLaunchHooks {
             .first()
             .ok_or_else(|| anyhow::anyhow!("Codex command is empty"))?;
         let mut child_command = Command::new(executable);
+        crate::codex_auto_update::configure_codex_process_command(
+            &mut child_command,
+            settings.codex_app_disable_auto_update,
+        );
         child_command
             .args(&command[1..])
             .stdout(Stdio::null())
