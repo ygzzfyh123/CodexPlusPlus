@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.2.49 - 2026-07-19
+
+- Codex增强页新增“关闭 Codex 自动更新”开关，只控制官方 Codex 桌面应用，不影响 Codex++ 自身的 GitHub Release 更新。
+- 开启后使用官方 `CODEX_SPARKLE_ENABLED=false` 启动门禁，在 Codex 主进程初始化更新器前同时阻止 macOS Sparkle 与 Windows Store/MSIX 更新器，从而关闭自动下载和安装更新。
+- Windows 打包版会同步当前用户环境并广播变更，Windows 便携版和直接启动进程会显式注入变量，macOS 会同步当前图形会话环境；重启 Codex 后完整生效。
+- 设置保存、页面桥接更新、完整配置导入、设置重置和每次 Codex 启动都会重新应用策略，旧配置默认继续允许 Codex 更新。
+
 ## 1.2.48 - 2026-07-17
 
 - 修复 macOS 新版 Codex++ 通过 Chat Completions 中转时，协议代理会静默丢弃新版具名工具、`input_schema` 和命名空间子工具的问题。

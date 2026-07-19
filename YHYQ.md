@@ -26,3 +26,6 @@
 - 已在 Codex增强页“界面与启动”分组新增“关闭 Codex 自动更新”开关，切换后立即保存，并明确说明不影响 Codex++ 自身 GitHub Release 更新、需重启 Codex 完整生效。
 - 验证完成：专项测试 5 项、启动器测试 69 项、桥接测试 25 项、强制中文和粘贴测试 10 项、前端测试 11 项、TypeScript 检查、Vite 生产构建及 Windows 管理器 `cargo check` 均通过。
 - `tools/i18n-verify.mjs` 仍报告仓库既有的缺失和陈旧翻译键；本次新增的两个英文词条已确认完整覆盖，没有出现在缺失列表中。
+- 已将发布版本提升到 `1.2.49`，同步更新 Rust workspace、Cargo.lock、前端 package、package-lock、Tauri 配置和更新日志。
+- 发布前完整验证通过：`cargo test --workspace -- --test-threads=1`、前端 TypeScript 检查、11 项前端测试、Vite 生产构建、Rust 格式检查、差异检查和本地品牌保护全部通过。
+- 已使用 Cargo metadata 与 Node 重新核对所有发布版本均为 `1.2.49`，并确认 GitHub 远端尚不存在 `v1.2.49` Release。
