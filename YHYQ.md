@@ -34,3 +34,6 @@
 - GitHub Actions 已成功完成版本与品牌校验、Windows x64、macOS x64、macOS ARM64 构建、安装包结构校验、六个资产上传和 GitHub Release 发布。
 - 已将 `v1.2.49` Release 正文更新为完整中文说明，明确只关闭官方 Codex 自动下载和安装更新，不影响 Codex++ 自身更新，并记录跨平台实现范围和验证结果。
 - 发布地址：`https://github.com/ygzzfyh123/CodexPPP/releases/tag/v1.2.49`。
+- 用户请求：研究并实现 Codex++ 在电脑端使用 API 调用模式时，仍可在设置中额外登录 ChatGPT/Codex 账户，从而与同账户手机 ChatGPT 应用建立远程调用链接。
+- 已读取项目根目录、工作记录、Git 状态和文件清单；当前位于干净分支 `远程调用`，仓库包含独立的 `apps/codex-plus-mobile-relay` 应用。
+- 已创建修改前检查点提交 `ef642fd`，后续将重点分析 Codex 登录态、API 鉴权、移动端远程调用协议和现有注入桥接的可复用边界。
