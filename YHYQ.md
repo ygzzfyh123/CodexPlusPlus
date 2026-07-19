@@ -29,3 +29,8 @@
 - 已将发布版本提升到 `1.2.49`，同步更新 Rust workspace、Cargo.lock、前端 package、package-lock、Tauri 配置和更新日志。
 - 发布前完整验证通过：`cargo test --workspace -- --test-threads=1`、前端 TypeScript 检查、11 项前端测试、Vite 生产构建、Rust 格式检查、差异检查和本地品牌保护全部通过。
 - 已使用 Cargo metadata 与 Node 重新核对所有发布版本均为 `1.2.49`，并确认 GitHub 远端尚不存在 `v1.2.49` Release。
+- 已将 `main` 和 `v1.2.49` 标签推送到 `https://github.com/ygzzfyh123/CodexPPP`。
+- 标签推送后 GitHub 未自动创建运行记录，已使用同一个 `release-assets.yml` 工作流手动触发 `v1.2.49`，运行编号 `29684352403`。
+- GitHub Actions 已成功完成版本与品牌校验、Windows x64、macOS x64、macOS ARM64 构建、安装包结构校验、六个资产上传和 GitHub Release 发布。
+- 已将 `v1.2.49` Release 正文更新为完整中文说明，明确只关闭官方 Codex 自动下载和安装更新，不影响 Codex++ 自身更新，并记录跨平台实现范围和验证结果。
+- 发布地址：`https://github.com/ygzzfyh123/CodexPPP/releases/tag/v1.2.49`。
