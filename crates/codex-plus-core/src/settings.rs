@@ -17,6 +17,14 @@ pub enum LaunchMode {
     Relay,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CodexAiShell {
+    PowerShell,
+    #[default]
+    Pwsh,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RelayContextSelection {
@@ -283,6 +291,12 @@ pub struct BackendSettings {
     pub codex_app_fast_startup: bool,
     #[serde(rename = "codexAppDisableAutoUpdate", default)]
     pub codex_app_disable_auto_update: bool,
+    #[serde(
+        rename = "codexAppAiShell",
+        default,
+        deserialize_with = "deserialize_codex_ai_shell"
+    )]
+    pub codex_app_ai_shell: CodexAiShell,
     #[serde(rename = "codexAppPerformanceProtection", default = "default_true")]
     pub codex_app_performance_protection: bool,
     #[serde(rename = "codexAppProjectMove", default = "default_true")]
@@ -357,6 +371,14 @@ pub struct BackendSettings {
         deserialize_with = "deserialize_stepwise_timeout_ms"
     )]
     pub codex_app_stepwise_timeout_ms: u64,
+    #[serde(rename = "codexAppMemoryEmbeddingEnabled", default)]
+    pub codex_app_memory_embedding_enabled: bool,
+    #[serde(rename = "codexAppMemoryEmbeddingBaseUrl", default)]
+    pub codex_app_memory_embedding_base_url: String,
+    #[serde(rename = "codexAppMemoryEmbeddingApiKey", default)]
+    pub codex_app_memory_embedding_api_key: String,
+    #[serde(rename = "codexAppMemoryEmbeddingModel", default)]
+    pub codex_app_memory_embedding_model: String,
     #[serde(rename = "codexAppImageOverlayEnabled", default)]
     pub codex_app_image_overlay_enabled: bool,
     #[serde(rename = "codexAppImageOverlayPath", default)]
@@ -418,6 +440,7 @@ impl Default for BackendSettings {
             codex_app_force_chinese_locale: true,
             codex_app_fast_startup: false,
             codex_app_disable_auto_update: false,
+            codex_app_ai_shell: CodexAiShell::Pwsh,
             codex_app_performance_protection: true,
             codex_app_project_move: true,
             codex_app_thread_id_badge: false,
@@ -443,6 +466,10 @@ impl Default for BackendSettings {
             codex_app_stepwise_max_input_chars: default_stepwise_max_input_chars(),
             codex_app_stepwise_max_output_tokens: default_stepwise_max_output_tokens(),
             codex_app_stepwise_timeout_ms: default_stepwise_timeout_ms(),
+            codex_app_memory_embedding_enabled: false,
+            codex_app_memory_embedding_base_url: String::new(),
+            codex_app_memory_embedding_api_key: String::new(),
+            codex_app_memory_embedding_model: String::new(),
             codex_app_image_overlay_enabled: false,
             codex_app_image_overlay_path: String::new(),
             codex_app_image_overlay_opacity: default_image_overlay_opacity(),
@@ -872,6 +899,21 @@ where
     D: serde::Deserializer<'de>,
 {
     Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+fn deserialize_codex_ai_shell<'de, D>(deserializer: D) -> Result<CodexAiShell, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(
+        match Option::<String>::deserialize(deserializer)?
+            .as_deref()
+            .map(str::trim)
+        {
+            Some("powershell") => CodexAiShell::PowerShell,
+            _ => CodexAiShell::Pwsh,
+        },
+    )
 }
 
 pub fn normalize_codex_extra_args(args: &[String]) -> Vec<String> {
@@ -1359,6 +1401,17 @@ fn normalize_settings_config_sections(mut settings: BackendSettings) -> BackendS
         clamp_stepwise_max_output_tokens(settings.codex_app_stepwise_max_output_tokens);
     settings.codex_app_stepwise_timeout_ms =
         clamp_stepwise_timeout_ms(settings.codex_app_stepwise_timeout_ms);
+    settings.codex_app_memory_embedding_base_url = settings
+        .codex_app_memory_embedding_base_url
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+    settings.codex_app_memory_embedding_api_key = settings
+        .codex_app_memory_embedding_api_key
+        .trim()
+        .to_string();
+    settings.codex_app_memory_embedding_model =
+        settings.codex_app_memory_embedding_model.trim().to_string();
     settings
 }
 
@@ -2469,5 +2522,53 @@ experimental_bearer_token = "sk-existing""#
 
         assert!(!updated.provider_sync_enabled);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn legacy_settings_default_to_pwsh_and_bm25_memory() {
+        let settings: BackendSettings =
+            serde_json::from_str(r#"{"enhancementsEnabled":true}"#).unwrap();
+
+        assert_eq!(settings.codex_app_ai_shell, CodexAiShell::Pwsh);
+        assert!(!settings.codex_app_memory_embedding_enabled);
+        assert!(settings.codex_app_memory_embedding_base_url.is_empty());
+        assert!(settings.codex_app_memory_embedding_api_key.is_empty());
+        assert!(settings.codex_app_memory_embedding_model.is_empty());
+    }
+
+    #[test]
+    fn settings_store_normalizes_memory_embedding_connection() {
+        let dir = temp_dir();
+        let store = SettingsStore::new(dir.join("settings.json"));
+        let settings = BackendSettings {
+            codex_app_ai_shell: CodexAiShell::PowerShell,
+            codex_app_memory_embedding_enabled: true,
+            codex_app_memory_embedding_base_url: " https://example.test/v1/ ".to_string(),
+            codex_app_memory_embedding_api_key: " key ".to_string(),
+            codex_app_memory_embedding_model: " embedding-model ".to_string(),
+            ..BackendSettings::default()
+        };
+
+        store.save(&settings).unwrap();
+        let loaded = store.load().unwrap();
+
+        assert_eq!(loaded.codex_app_ai_shell, CodexAiShell::PowerShell);
+        assert_eq!(
+            loaded.codex_app_memory_embedding_base_url,
+            "https://example.test/v1"
+        );
+        assert_eq!(loaded.codex_app_memory_embedding_api_key, "key");
+        assert_eq!(loaded.codex_app_memory_embedding_model, "embedding-model");
+    }
+
+    #[test]
+    fn unknown_ai_shell_value_falls_back_without_resetting_settings() {
+        let settings: BackendSettings = serde_json::from_str(
+            r#"{"providerSyncEnabled":true,"codexAppAiShell":"future-shell"}"#,
+        )
+        .unwrap();
+
+        assert!(settings.provider_sync_enabled);
+        assert_eq!(settings.codex_app_ai_shell, CodexAiShell::Pwsh);
     }
 }

@@ -36,6 +36,9 @@ impl Default for LauncherHooks {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.iter().any(|arg| arg == "--codex-plus-hook") {
+        return codex_plus_core::codex_hooks::run_hook_from_stdio().await;
+    }
     let helper_only = args.iter().any(|arg| arg == "--helper-only");
     let options = parse_launch_options(args.iter());
     if helper_only {
@@ -49,6 +52,9 @@ async fn main() -> Result<()> {
         activate_existing_codex_app(&options).await?;
         return Ok(());
     };
+    if let Ok(settings) = codex_plus_core::settings::SettingsStore::default().load() {
+        ensure_codex_plus_hooks(&settings).await;
+    }
     tokio::spawn(async {
         let _ = notify_manager_when_update_available().await;
     });
@@ -56,6 +62,48 @@ async fn main() -> Result<()> {
     let handle = launch_and_inject_with_hooks(options, &hooks).await?;
     handle.wait_for_codex_exit().await?;
     Ok(())
+}
+
+async fn ensure_codex_plus_hooks(settings: &codex_plus_core::settings::BackendSettings) {
+    let launcher_path =
+        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("codex-plus-plus"));
+    match codex_plus_core::codex_hooks::apply_codex_plus_hooks(settings, &launcher_path) {
+        Ok(result) => {
+            let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+                "launcher.codex_hooks.applied",
+                json!({
+                    "path": result.path,
+                    "installed": result.installed,
+                    "removed": result.removed
+                }),
+            );
+        }
+        Err(error) => {
+            let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+                "launcher.codex_hooks.apply_failed",
+                json!({ "error": error.to_string() }),
+            );
+            return;
+        }
+    }
+    match codex_plus_core::codex_hooks::trust_codex_plus_hooks(Some(
+        settings.codex_app_path.as_str(),
+    ))
+    .await
+    {
+        Ok(result) => {
+            let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+                "launcher.codex_hooks.trusted",
+                json!({ "trusted": result.trusted }),
+            );
+        }
+        Err(error) => {
+            let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+                "launcher.codex_hooks.trust_failed",
+                json!({ "error": error.to_string() }),
+            );
+        }
+    }
 }
 
 fn acquire_single_instance_guard(
@@ -136,6 +184,7 @@ fn should_recover_stale_launcher(debug_port: u16) -> bool {
 async fn activate_existing_codex_app(options: &LaunchOptions) -> anyhow::Result<()> {
     let hooks = LauncherHooks::default();
     let settings = hooks.load_settings().await?;
+    ensure_codex_plus_hooks(&settings).await;
     let app_dir = hooks.resolve_app_dir(options.app_dir.as_deref(), &settings)?;
     let launch_result = hooks
         .launch_codex(

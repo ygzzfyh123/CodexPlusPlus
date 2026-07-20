@@ -1,5 +1,15 @@
 # 更新日志
 
+## 1.2.52 - 2026-07-20
+
+- “添加供应商（可自定义）”新增供应商级 Codex 目标开关，与普通供应商一致地维护 `[features] goals = true`。
+- Codex增强页新增 AI 调用终端选择，Windows 可在 Windows PowerShell 与 PowerShell 7 `pwsh` 之间切换；AI 命令通过官方 `PreToolUse` Hook 和 `-EncodedCommand` 安全包装，所选终端不可用时自动回退。
+- 新增本地 Codex 记忆检索：默认使用支持中英文的 BM25 关键词匹配，在每次用户提示前只附加最相关且受长度限制的记忆片段。
+- 新增“记忆嵌入模型”开关及 `Base URL`、`Key`、`Model` 配置；开启后调用 OpenAI 兼容 `/embeddings` 接口并缓存文档向量，配置缺失、超时或响应异常时自动回退 BM25，不阻断正常对话。
+- 记忆读取会跳过隐藏目录、符号链接、超限和非 UTF-8 文件，并限制扫描深度、文件大小、总读取量、片段数、向量维度和附加上下文长度。
+- Codex++ 只合并和更新自己生成的 Hook，保留用户已有 Hook；通过 app-server `hooks/list` 与 `config/batchWrite` 精确信任当前哈希，不使用全局信任绕过。
+- 设置保存、完整配置导入、设置重置和启动器启动都会自动修复 Hook 路径与信任状态；供应商切换重写 `config.toml` 时会保留 `[hooks.state]`。
+
 ## 1.2.51 - 2026-07-19
 
 - 手机远控页新增 OpenAI 官方设备码登录，可在手机或其他设备打开官方验证页并输入一次性代码，不依赖本机浏览器 OAuth 回调。

@@ -122,3 +122,32 @@
 - 页面实测通过：桌面端 `1280x720` 与窄屏 `390x844` 均只显示一个供应商级目标开关，页面无横向溢出或控件重叠。
 - 已关闭临时 Vite 预览并删除本次生成的前端 `dist` 和临时日志；保留可复用的 Rust 编译缓存。
 - 本轮未推送 GitHub，也未创建 Release。
+
+## 2026-07-20
+
+- 用户请求：在“Codex增强”页面增加 AI 调用终端选择，提供 Windows PowerShell 和 PowerShell 7 `pwsh` 两个选项。
+- 用户请求：增加“记忆嵌入模型”开关；开启后显示 `Base URL`、`Key`、`Model` 三个输入框，并使用 OpenAI 兼容嵌入接口检索本地 Codex 记忆；关闭时使用本地 BM25 关键词匹配。
+- 用户要求完成后推送到 `https://github.com/ygzzfyh123/CodexPPP`，由 GitHub Actions 编译并发布 GitHub Release。
+- 已确认实施方案：通过 Codex 官方 Hook 机制实现 AI shell 选择与提示前记忆检索，不修改用户提示词，不读取浏览器凭据，不让嵌入接口故障阻断正常对话。
+- AI shell 将通过 `PreToolUse` Hook 包装 `Bash` 工具命令，并使用 PowerShell `-EncodedCommand` 避免复杂命令的引号和换行转义问题。
+- 记忆检索将通过 `UserPromptSubmit` Hook 返回 `additionalContext`；嵌入配置缺失、接口超时或响应异常时自动回退本地 BM25。
+- Hook 配置只维护 Codex++ 自有条目并保留用户现有 Hook；后续将补充精确信任、设置兼容、单元测试、前端验证和发布记录。
+- 已新增 `codexAppAiShell` 设置，支持 Windows PowerShell 与 PowerShell 7 `pwsh`，旧配置默认使用 `pwsh`，未知值安全回退。
+- 已新增记忆嵌入开关及 `Base URL`、`Key`、`Model` 设置；连接字段保存时会去除首尾空白和 Base URL 末尾斜杠。
+- 已新增核心 `codex_hooks` 模块：只合并和替换带 Codex++ 标记的 Hook，保留用户已有 Hook；Codex增强总开关关闭时只移除 Codex++ 自有 Hook。
+- 已实现 `PreToolUse` AI shell 包装：匹配 `Bash` 工具，把字符串或并行命令数组编码为 PowerShell UTF-16LE `-EncodedCommand`，所选终端不可用时自动回退。
+- 已实现 `UserPromptSubmit` 记忆检索：读取 `~/.codex/memories` 的安全文本文件，限制目录深度、符号链接、单文件大小、总大小、片段数和附加上下文长度。
+- 已实现中英文混合分词与本地 BM25 排序；嵌入模式使用 OpenAI 兼容 `/embeddings`，缓存文档向量且不缓存 Key 或记忆正文，接口失败自动回退 BM25。
+- 已实现 Codex app-server `hooks/list` 与 `config/batchWrite` 精确信任，只写入 Codex++ Hook 的 `currentHash`，并在设置保存、配置导入、重置和启动器启动时自动应用。
+- 已修改供应商配置写入链路，切换或重写 `config.toml` 时保留现有 `[hooks.state]`，避免 Hook 精确信任丢失。
+- 已在“Codex增强”页面增加 AI 调用终端二段选择和“记忆检索”分组；嵌入开关开启后显示三个输入框，并补齐中英文文案与窄屏响应式布局。
+- 当前验证：前端 TypeScript 检查、11 项测试、Vite 生产构建、管理器 Rust 检查、6 项 Hook 测试和 Hook 信任状态保留测试均通过。
+- `tools/i18n-verify.mjs` 仍报告仓库既有的缺失与陈旧词条；本次新增词条没有出现在缺失列表中。
+- 已使用本机 Codex CLI `0.144.2` 的真实 app-server 验证 Hook 安装与信任流程，AI shell 和记忆检索两个 Codex++ Hook 均被识别为 `trusted`，复查无错误或警告。
+- 已完成 Windows 启动器端到端验证：选择 `pwsh` 后 Bash 工具命令会由 `pwsh.exe -EncodedCommand` 执行，多行命令内容和退出码能够正确往返。
+- 已完成桌面端 `1280x720` 页面视觉检查，AI 调用终端选项、记忆嵌入开关及三个连接输入框均无重叠、裁切或横向溢出。
+- 已关闭本地 Vite 预览并释放 `1420` 端口，删除前端 `dist`、临时 Schema 和测试文件。
+- 已将本次正式发布版本统一提升到 `1.2.52`，同步更新 Rust workspace、Cargo.lock、前端 package、package-lock、Tauri 配置和更新日志。
+- 用户追加请求：暂缓当前完整验证，先从上游 `BigPizzaV3/CodexPlusPlus` 的 `v1.2.38` 仅同步六组指定更新，包括纯文本模型图片处理、GPT-5.6 元数据与 Fast 兼容、audio transcriptions 代理、Codex Desktop 路径误识别修复、供应商切换安全状态与无项目任务兜底、测试稳定性和 Rust 格式修复。
+- 用户说明项目已迁移到全新 fork `Alunixa-Code/CodexPlusPlusPlus`，要求最终以当前本地代码覆盖新仓库，再通过 GitHub Actions 构建并发布 GitHub Release。
+- 本轮首次全工作区测试已完成编译，但 Windows 在启动 `codex-plus-core` 测试可执行文件前报告文件不存在；前端 TypeScript 检查、11 项测试、Vite 生产构建和 Rust 格式检查均通过。该异常将在合并指定上游改动后统一复查。

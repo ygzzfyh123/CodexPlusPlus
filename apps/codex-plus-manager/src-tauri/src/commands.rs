@@ -537,10 +537,12 @@ pub fn save_settings(settings: BackendSettings) -> CommandResult<SettingsPayload
             codex_plus_core::codex_auto_update::apply_codex_auto_update_policy(
                 settings.codex_app_disable_auto_update,
             )
-        });
+        })
+        .and_then(|_| apply_codex_hook_policy(&settings));
     match save_result {
         Ok(()) => {
             let max_threads = settings.codex_app_sub_agent_max_threads;
+            let codex_app_path = settings.codex_app_path.clone();
             tauri::async_runtime::spawn(async move {
                 let _ =
                     codex_plus_core::codex_config_reload::reload_user_config_with_sub_agent_limit(
@@ -548,6 +550,7 @@ pub fn save_settings(settings: BackendSettings) -> CommandResult<SettingsPayload
                         max_threads,
                     )
                     .await;
+                trust_codex_hooks_and_log(codex_app_path).await;
             });
             settings_payload("设置已保存。", "设置保存后重新读取失败")
         }
@@ -560,6 +563,24 @@ pub fn save_settings(settings: BackendSettings) -> CommandResult<SettingsPayload
                     .to_string(),
                 user_scripts: user_script_inventory(),
             },
+        ),
+    }
+}
+
+fn apply_codex_hook_policy(settings: &BackendSettings) -> anyhow::Result<()> {
+    let launcher_path = codex_plus_core::install::option_or_current_exe(&None, SILENT_BINARY);
+    codex_plus_core::codex_hooks::apply_codex_plus_hooks(settings, &launcher_path).map(|_| ())
+}
+
+async fn trust_codex_hooks_and_log(codex_app_path: String) {
+    match codex_plus_core::codex_hooks::trust_codex_plus_hooks(Some(&codex_app_path)).await {
+        Ok(result) => log_manager_event(
+            "manager.codex_hooks.trusted",
+            json!({ "trusted": result.trusted }),
+        ),
+        Err(error) => log_manager_event(
+            "manager.codex_hooks.trust_failed",
+            json!({ "error": error.to_string() }),
         ),
     }
 }
@@ -596,12 +617,17 @@ pub fn import_full_config(path: String) -> CommandResult<Value> {
             let policy_result = SettingsStore::default().load().and_then(|settings| {
                 codex_plus_core::codex_auto_update::apply_codex_auto_update_policy(
                     settings.codex_app_disable_auto_update,
-                )
+                )?;
+                apply_codex_hook_policy(&settings)?;
+                Ok(settings.codex_app_path)
             });
             match policy_result {
-                Ok(()) => ok("完整配置已导入，并已在导入前自动备份原配置。", payload),
+                Ok(codex_app_path) => {
+                    tauri::async_runtime::spawn(trust_codex_hooks_and_log(codex_app_path));
+                    ok("完整配置已导入，并已在导入前自动备份原配置。", payload)
+                }
                 Err(error) => failed(
-                    &format!("完整配置已导入，但应用 Codex 自动更新策略失败：{error}"),
+                    &format!("完整配置已导入，但应用 Codex 运行策略失败：{error}"),
                     payload,
                 ),
             }
@@ -1921,12 +1947,19 @@ pub fn copy_diagnostics() -> CommandResult<DiagnosticsPayload> {
 #[tauri::command]
 pub fn reset_settings() -> CommandResult<SettingsPayload> {
     let settings = BackendSettings::default();
-    match SettingsStore::default().save(&settings).and_then(|_| {
-        codex_plus_core::codex_auto_update::apply_codex_auto_update_policy(
-            settings.codex_app_disable_auto_update,
-        )
-    }) {
-        Ok(()) => settings_payload("设置已重置为默认值。", "设置重置后重新读取失败"),
+    match SettingsStore::default()
+        .save(&settings)
+        .and_then(|_| {
+            codex_plus_core::codex_auto_update::apply_codex_auto_update_policy(
+                settings.codex_app_disable_auto_update,
+            )
+        })
+        .and_then(|_| apply_codex_hook_policy(&settings))
+    {
+        Ok(()) => {
+            tauri::async_runtime::spawn(trust_codex_hooks_and_log(settings.codex_app_path.clone()));
+            settings_payload("设置已重置为默认值。", "设置重置后重新读取失败")
+        }
         Err(error) => failed(
             &format!("重置设置失败：{error}"),
             SettingsPayload {

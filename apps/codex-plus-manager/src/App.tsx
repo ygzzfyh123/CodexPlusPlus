@@ -157,6 +157,7 @@ type BackendSettings = {
   codexAppForceChineseLocale: boolean;
   codexAppFastStartup: boolean;
   codexAppDisableAutoUpdate: boolean;
+  codexAppAiShell: CodexAiShell;
   codexAppPerformanceProtection: boolean;
   codexAppProjectMove: boolean;
   codexAppThreadIdBadge: boolean;
@@ -181,6 +182,10 @@ type BackendSettings = {
   codexAppStepwiseMaxInputChars: number;
   codexAppStepwiseMaxOutputTokens: number;
   codexAppStepwiseTimeoutMs: number;
+  codexAppMemoryEmbeddingEnabled: boolean;
+  codexAppMemoryEmbeddingBaseUrl: string;
+  codexAppMemoryEmbeddingApiKey: string;
+  codexAppMemoryEmbeddingModel: string;
   codexAppImageOverlayEnabled: boolean;
   codexAppImageOverlayPath: string;
   codexAppImageOverlayOpacity: number;
@@ -200,6 +205,7 @@ type BackendSettings = {
 
 type ZedOpenStrategy = "addToFocusedWorkspace" | "reuseWindow" | "newWindow" | "default";
 type LaunchMode = "patch" | "relay";
+type CodexAiShell = "powershell" | "pwsh";
 type ImageOverlayFitMode = "fill" | "fit" | "stretch" | "tile" | "center";
 
 export type RelayProfile = {
@@ -820,6 +826,7 @@ const defaultSettings: BackendSettings = {
   codexAppForceChineseLocale: true,
   codexAppFastStartup: false,
   codexAppDisableAutoUpdate: false,
+  codexAppAiShell: "pwsh",
   codexAppPerformanceProtection: true,
   codexAppProjectMove: true,
   codexAppThreadIdBadge: false,
@@ -844,6 +851,10 @@ const defaultSettings: BackendSettings = {
   codexAppStepwiseMaxInputChars: 6000,
   codexAppStepwiseMaxOutputTokens: 500,
   codexAppStepwiseTimeoutMs: 8000,
+  codexAppMemoryEmbeddingEnabled: false,
+  codexAppMemoryEmbeddingBaseUrl: "",
+  codexAppMemoryEmbeddingApiKey: "",
+  codexAppMemoryEmbeddingModel: "",
   codexAppImageOverlayEnabled: false,
   codexAppImageOverlayPath: "",
   codexAppImageOverlayOpacity: 35,
@@ -3597,7 +3608,81 @@ function EnhanceScreen({
               <FeatureToggle title="Stepwise" detail={t("在 Codex 页面显示可拖动的后续建议浮层；建议由单独配置的 Stepwise API 生成。")} checked={form.codexAppStepwiseEnabled} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppStepwiseEnabled", value)} />
               <FeatureToggle title={t("Stepwise 直接发送")} detail={t("点击建议后自动发送；关闭时只填入输入框。")} checked={form.codexAppStepwiseDirectSend} disabled={!masterEnabled || !form.codexAppStepwiseEnabled} onChange={(value) => setEnhanceFlag("codexAppStepwiseDirectSend", value)} />
             </FeatureGroup>
+            <FeatureGroup title={t("记忆检索")} detail={t("从本地 Codex 记忆中检索与当前提示相关的片段。")}>
+              <FeatureToggle
+                title={t("记忆嵌入模型")}
+                detail={t("开启后使用 OpenAI 兼容嵌入接口；关闭或接口异常时使用本地 BM25 关键词匹配。")}
+                checked={form.codexAppMemoryEmbeddingEnabled}
+                disabled={!masterEnabled}
+                onChange={(value) => setEnhanceFlag("codexAppMemoryEmbeddingEnabled", value)}
+              />
+              {form.codexAppMemoryEmbeddingEnabled ? (
+                <div className="memory-embedding-fields">
+                  <Field label="Base URL">
+                    <Input
+                      disabled={!masterEnabled}
+                      onChange={(event) => onFormChange({ ...form, codexAppMemoryEmbeddingBaseUrl: event.currentTarget.value })}
+                      placeholder="https://api.example.com/v1"
+                      spellCheck={false}
+                      value={form.codexAppMemoryEmbeddingBaseUrl}
+                    />
+                  </Field>
+                  <Field label="Key">
+                    <Input
+                      autoComplete="off"
+                      disabled={!masterEnabled}
+                      onChange={(event) => onFormChange({ ...form, codexAppMemoryEmbeddingApiKey: event.currentTarget.value })}
+                      placeholder="sk-..."
+                      spellCheck={false}
+                      type="password"
+                      value={form.codexAppMemoryEmbeddingApiKey}
+                    />
+                  </Field>
+                  <Field label="Model">
+                    <Input
+                      disabled={!masterEnabled}
+                      onChange={(event) => onFormChange({ ...form, codexAppMemoryEmbeddingModel: event.currentTarget.value })}
+                      placeholder="text-embedding-3-small"
+                      spellCheck={false}
+                      value={form.codexAppMemoryEmbeddingModel}
+                    />
+                  </Field>
+                </div>
+              ) : null}
+            </FeatureGroup>
             <FeatureGroup title={t("界面与启动")} detail={t("控制语言、启动速度和 Codex 原生界面调整。")}>
+              {isWindowsPlatform ? (
+                <div className={`feature-choice-row ${!masterEnabled ? "disabled" : ""}`}>
+                  <div>
+                    <strong>{t("AI 调用终端")}</strong>
+                    <small>{t("选择 Codex AI 执行命令时使用的 PowerShell；所选终端不可用时自动回退。")}</small>
+                  </div>
+                  <div aria-label={t("AI 调用终端")} className="segmented ai-shell-segmented" role="radiogroup">
+                    <button
+                      aria-checked={form.codexAppAiShell === "powershell"}
+                      className={form.codexAppAiShell === "powershell" ? "active" : ""}
+                      disabled={!masterEnabled}
+                      onClick={() => onFormChange({ ...form, codexAppAiShell: "powershell" })}
+                      role="radio"
+                      type="button"
+                    >
+                      <span>Windows PowerShell</span>
+                      <small>powershell.exe</small>
+                    </button>
+                    <button
+                      aria-checked={form.codexAppAiShell === "pwsh"}
+                      className={form.codexAppAiShell === "pwsh" ? "active" : ""}
+                      disabled={!masterEnabled}
+                      onClick={() => onFormChange({ ...form, codexAppAiShell: "pwsh" })}
+                      role="radio"
+                      type="button"
+                    >
+                      <span>PowerShell 7</span>
+                      <small>pwsh.exe</small>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               {isWindowsPlatform ? <FeatureToggle title={t("桌宠跟随真实鼠标")} detail={t("仅支持 V2 桌宠；不会修改宠物文件。将 V2 的 Computer Use 光标朝向动作映射到真实鼠标，V1 开启后安全不生效；拖拽、原生悬停或 Computer Use 活跃时自动让步。")} checked={form.codexAppPetRealMouseLook} disabled={!masterEnabled} onChange={(value) => setPersistedEnhanceFlag("codexAppPetRealMouseLook", value)} /> : null}
               <FeatureToggle title={t("强制中文界面")} detail={t("强制启用 Codex App 内置 zh-CN 语言包，避免 Statsig/VPN 不通时回退英文。需重启 Codex 才能完整生效。")} checked={form.codexAppForceChineseLocale} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppForceChineseLocale", value)} />
               <FeatureToggle title={t("快速启动")} detail={t("默认关闭；无 VPN 时可开启，让 Statsig 初始化快速失败，减少启动时长。需重启 Codex 才生效。")} checked={form.codexAppFastStartup} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppFastStartup", value)} />
@@ -7344,6 +7429,7 @@ function normalizeSettings(settings: BackendSettings): BackendSettings {
     ...settings,
     relayProfilesEnabled: settings.relayProfilesEnabled !== false,
     computerUseGuardEnabled: settings.computerUseGuardEnabled === true,
+    codexAppAiShell: normalizeCodexAiShell(settings.codexAppAiShell),
     codexAppImageOverlayOpacity: clampNumber(settings.codexAppImageOverlayOpacity || 35, 1, 100),
     codexAppImageOverlayFitMode: normalizeImageOverlayFitMode(settings.codexAppImageOverlayFitMode),
     codexAppStepwiseMaxItems: clampNumber(settings.codexAppStepwiseMaxItems ?? 6, 0, 6),
@@ -7366,6 +7452,10 @@ function normalizeImageOverlayFitMode(value: string | undefined): ImageOverlayFi
   return value === "fill" || value === "fit" || value === "stretch" || value === "tile" || value === "center"
     ? value
     : "fit";
+}
+
+function normalizeCodexAiShell(value: string | undefined): CodexAiShell {
+  return value === "powershell" ? "powershell" : "pwsh";
 }
 
 function codexExtraArgsToInput(args: string[] | undefined) {

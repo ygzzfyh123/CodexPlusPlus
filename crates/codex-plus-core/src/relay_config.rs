@@ -1186,6 +1186,12 @@ fn write_codex_live_atomic(
     };
     let config_text = config_text.as_deref();
 
+    let config_text = match config_text {
+        Some(config_text) => Some(preserve_live_hook_state_config(home, config_text)?),
+        None => None,
+    };
+    let config_text = config_text.as_deref();
+
     if let Some(config_text) = config_text {
         validate_toml_config(config_text, &config_path)?;
     }
@@ -1264,6 +1270,50 @@ fn preserve_live_marketplace_configs(home: &Path, config_text: &str) -> anyhow::
     for (name, marketplace) in live_marketplaces.iter() {
         if target_marketplaces.get(name).is_none() {
             target_marketplaces.insert(name, marketplace.clone());
+        }
+    }
+
+    Ok(ensure_trailing_newline(target.to_string()))
+}
+
+fn preserve_live_hook_state_config(home: &Path, config_text: &str) -> anyhow::Result<String> {
+    let live_config = read_optional_text(&home.join("config.toml"))?;
+    if live_config.trim().is_empty() {
+        return Ok(config_text.to_string());
+    }
+
+    let mut target = parse_toml_document(config_text)?;
+    let live = parse_toml_document(&live_config)?;
+    let Some(live_state) = live
+        .get("hooks")
+        .and_then(Item::as_table_like)
+        .and_then(|hooks| hooks.get("state"))
+        .and_then(Item::as_table_like)
+    else {
+        return Ok(ensure_trailing_newline(target.to_string()));
+    };
+    if live_state.is_empty() {
+        return Ok(ensure_trailing_newline(target.to_string()));
+    }
+
+    if target.get("hooks").is_none() {
+        target["hooks"] = toml_edit::table();
+    }
+    let Some(target_hooks) = target.get_mut("hooks").and_then(Item::as_table_like_mut) else {
+        return Ok(ensure_trailing_newline(target.to_string()));
+    };
+    if target_hooks.get("state").is_none() {
+        target_hooks.insert("state", toml_edit::table());
+    }
+    let Some(target_state) = target_hooks
+        .get_mut("state")
+        .and_then(Item::as_table_like_mut)
+    else {
+        return Ok(ensure_trailing_newline(target.to_string()));
+    };
+    for (key, state) in live_state.iter() {
+        if target_state.get(key).is_none() {
+            target_state.insert(key, state.clone());
         }
     }
 
@@ -2860,6 +2910,23 @@ mod tests {
             ..RelayProfile::default()
         };
         assert!(relay_profile_model(&empty).trim().is_empty());
+    }
+
+    #[test]
+    fn relay_config_write_preserves_hook_trust_state() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("config.toml"),
+            "model = \"old\"\n\n[hooks.state.\"user:PreToolUse:command:0:0\"]\ntrusted_hash = \"sha256:abc\"\nenabled = true\n",
+        )
+        .unwrap();
+
+        apply_relay_config_file_to_home(temp.path(), "model = \"new\"\n").unwrap();
+        let written = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+
+        assert!(written.contains("model = \"new\""));
+        assert!(written.contains("[hooks.state.\"user:PreToolUse:command:0:0\"]"));
+        assert!(written.contains("trusted_hash = \"sha256:abc\""));
     }
 }
 

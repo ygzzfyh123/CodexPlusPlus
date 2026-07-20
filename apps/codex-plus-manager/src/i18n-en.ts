@@ -103,6 +103,15 @@ export const EN_PLAIN: Record<string, string> = {
   "调整会话管理、输入行为和对话阅读体验。": "Adjust session management, input behavior and conversation reading experience.",
   "界面与启动": "Interface and startup",
   "控制语言、启动速度和 Codex 原生界面调整。": "Control language, startup speed and Codex native UI adjustments.",
+  "AI 调用终端": "AI command shell",
+  "选择 Codex AI 执行命令时使用的 PowerShell；所选终端不可用时自动回退。":
+    "Choose the PowerShell used for Codex AI commands. It falls back automatically if the selected shell is unavailable.",
+  "记忆检索": "Memory retrieval",
+  "从本地 Codex 记忆中检索与当前提示相关的片段。":
+    "Retrieve local Codex memory fragments relevant to the current prompt.",
+  "记忆嵌入模型": "Memory embedding model",
+  "开启后使用 OpenAI 兼容嵌入接口；关闭或接口异常时使用本地 BM25 关键词匹配。":
+    "Use an OpenAI-compatible embedding endpoint when enabled. When disabled or unavailable, use local BM25 keyword matching.",
   "远程项目": "Remote projects",
   "连接 Zed Remote 和 upstream worktree 辅助能力。": "Connect Zed Remote and upstream worktree helper capabilities.",
   "最多建议数": "Max suggestions",
