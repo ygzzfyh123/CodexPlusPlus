@@ -169,3 +169,8 @@
 - 最终前端验证通过：TypeScript 检查、12 项 Node 测试和 Vite 生产构建均成功；Vite 仅保留既有的单 chunk 大于 500 KB 提醒。
 - 最终 Rust 格式检查通过，完整 `cargo test --workspace -- --test-threads=1` 已覆盖核心、代理、供应商、管理器、启动器、数据层和文档测试，全部零失败。
 - 更新源回归测试确认默认仓库、GitHub Release API 和 Releases 页面均指向 `Alunixa-Code/CodexPlusPlusPlus`。
+- 已将本地 `origin` 迁移到 `Alunixa-Code/CodexPlusPlusPlus`，保留旧 `origin` 为 `legacy-origin`，并将当前发布分支改名为 `main`。
+- 直接覆盖推送新 fork 时，GitHub 返回 403；当前细粒度 Token 虽能读取仓库角色，但对新 fork 只具备 metadata 读取权限，无法写入 Contents。
+- 已尝试 GitHub CLI OAuth 权限刷新，但授权等待超时并已清理残留进程；SSH 也没有可用 GitHub 公钥。
+- 已将完整已验证代码推送到同一 fork 网络的 `Alunixa/CodexPPP:codex/v1.2.53` 临时分支，作为远端安全副本。
+- 创建跨 fork PR 时同样被 Token 权限范围拒绝；继续覆盖新 fork、触发 Actions 和发布 Release 需要为新仓库授予 Contents 与 Workflows 写权限，或由用户明确授权使用已登录浏览器完成 GitHub OAuth。
