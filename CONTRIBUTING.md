@@ -6,8 +6,8 @@ Thank you for your interest in contributing to CodexPlusPlus!
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/ygzzfyh123/CodexPPP.git
-   cd CodexPlusPlus
+   git clone https://github.com/Alunixa-Code/CodexPlusPlusPlus.git
+   cd CodexPlusPlusPlus
    ```
 
 2. **Install Rust toolchain**

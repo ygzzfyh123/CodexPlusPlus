@@ -151,3 +151,11 @@
 - 用户追加请求：暂缓当前完整验证，先从上游 `BigPizzaV3/CodexPlusPlus` 的 `v1.2.38` 仅同步六组指定更新，包括纯文本模型图片处理、GPT-5.6 元数据与 Fast 兼容、audio transcriptions 代理、Codex Desktop 路径误识别修复、供应商切换安全状态与无项目任务兜底、测试稳定性和 Rust 格式修复。
 - 用户说明项目已迁移到全新 fork `Alunixa-Code/CodexPlusPlusPlus`，要求最终以当前本地代码覆盖新仓库，再通过 GitHub Actions 构建并发布 GitHub Release。
 - 本轮首次全工作区测试已完成编译，但 Windows 在启动 `codex-plus-core` 测试可执行文件前报告文件不存在；前端 TypeScript 检查、11 项测试、Vite 生产构建和 Rust 格式检查均通过。该异常将在合并指定上游改动后统一复查。
+- 已按上游 `v1.2.38` 的首父提交逐项移植指定功能，没有合并该版本之外的上游历史，也排除了 `.trae/`、`plan.md` 和 `plan_v2.md` 等开发草稿忽略项。
+- 已完成 GPT-5.6 元数据与 Fast 兼容移植，并与现有自定义模型窗口、自动压缩和多协议目录逻辑合并。
+- 已完成 audio transcriptions 代理移植，保留当前 Responses、Chat Completions、Completions、Anthropic 和 Gemini 协议，并补全二进制、Content-Length、chunked 和 multipart 请求读取。
+- 已完成 send-as-is、strip images、VLM analysis 三态图片处理，并将上游只覆盖两种协议的实现扩展到当前全部五种协议。
+- 已完成 Codex++ 安装目录误识别修复、供应商切换安全状态快照与恢复、无项目主窗口兜底，以及对应测试。
+- 上游最终 Rust 格式提交因移植过程中已执行相同格式化而成为空补丁，已正常跳过；实际格式变化已包含在功能提交中。
+- 已确认新仓库 `Alunixa-Code/CodexPlusPlusPlus` 为公开 fork，默认分支为 `main`，当前账号拥有管理员权限且 Discussions 已启用。
+- 已将本次正式发布版本提升为 `1.2.53`，并开始迁移 Cargo 元数据、应用内项目链接、问题反馈、自动更新 API、README、贡献指南和 Discussions 到新仓库。

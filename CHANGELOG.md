@@ -1,6 +1,6 @@
 # 更新日志
 
-## 1.2.52 - 2026-07-20
+## 1.2.53 - 2026-07-20
 
 - “添加供应商（可自定义）”新增供应商级 Codex 目标开关，与普通供应商一致地维护 `[features] goals = true`。
 - Codex增强页新增 AI 调用终端选择，Windows 可在 Windows PowerShell 与 PowerShell 7 `pwsh` 之间切换；AI 命令通过官方 `PreToolUse` Hook 和 `-EncodedCommand` 安全包装，所选终端不可用时自动回退。
@@ -9,6 +9,13 @@
 - 记忆读取会跳过隐藏目录、符号链接、超限和非 UTF-8 文件，并限制扫描深度、文件大小、总读取量、片段数、向量维度和附加上下文长度。
 - Codex++ 只合并和更新自己生成的 Hook，保留用户已有 Hook；通过 app-server `hooks/list` 与 `config/batchWrite` 精确信任当前哈希，不使用全局信任绕过。
 - 设置保存、完整配置导入、设置重置和启动器启动都会自动修复 Hook 路径与信任状态；供应商切换重写 `config.toml` 时会保留 `[hooks.state]`。
+- 纯文本模型新增每模型图片处理模式，可选择原样发送、剥离图片或调用独立 VLM 分析；VLM 路径包含缓存、并发限制、上下文预算和失败保护。
+- 补全 GPT-5.6 系列模型元数据、上下文目录和推理档位，并增强 Fast 服务档位在新版 Codex 模块中的兼容。
+- 本地协议代理新增 `/audio/transcriptions`，支持 multipart、Content-Length 和 chunked 请求体原样转发。
+- 修复选择 Codex++ 自身安装目录时被误识别为官方 Codex Desktop 路径的问题。
+- 供应商同步和切换会备份并恢复白名单内的 Codex App 安全状态，同时为没有项目的主窗口补充启动兜底。
+- 项目主页、问题反馈、自动更新和发布地址迁移到 `Alunixa-Code/CodexPlusPlusPlus`。
+- 同步补充音频请求读取、状态同步、路径识别和模型兼容测试，并统一 Rust 格式。
 
 ## 1.2.51 - 2026-07-19
 
